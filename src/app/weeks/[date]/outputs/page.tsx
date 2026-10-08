@@ -111,7 +111,7 @@ export default async function OutputsPage({ params }: { params: Promise<{ date: 
           .map(({ pub, template, warnings, error }) => {
             const base = `/weeks/${date}/outputs/${pub.key}`;
             return (
-              <section key={pub.id} className="card overflow-hidden">
+              <section key={pub.id} className={`card overflow-hidden ${(template!.pages ?? 1) > 1 ? "md:col-span-2" : ""}`}>
                 <div className="card-header">
                   <h2 className="font-semibold text-navy">{pub.name}</h2>
                 </div>
@@ -119,15 +119,19 @@ export default async function OutputsPage({ params }: { params: Promise<{ date: 
                   {error ? (
                     <p className="rounded bg-red-50 p-3 text-sm text-red-800">Couldn&apos;t generate: {error}</p>
                   ) : (
-                    <a href={`${base}?format=png`} target="_blank" rel="noreferrer">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={`${base}?format=png&v=${version}`}
-                        alt={`${pub.name} preview`}
-                        className="w-full rounded border border-stone-200 shadow-sm"
-                        style={{ aspectRatio: `${template!.width} / ${template!.height}` }}
-                      />
-                    </a>
+                    <div className={(template!.pages ?? 1) > 1 ? "grid grid-cols-2 gap-2" : ""}>
+                      {Array.from({ length: template!.pages ?? 1 }, (_, i) => i + 1).map((n) => (
+                        <a key={n} href={`${base}?format=png&page=${n}`} target="_blank" rel="noreferrer">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={`${base}?format=png&page=${n}&v=${version}`}
+                            alt={`${pub.name} preview${(template!.pages ?? 1) > 1 ? `, page ${n}` : ""}`}
+                            className="w-full rounded border border-stone-200 shadow-sm"
+                            style={{ aspectRatio: `${template!.width} / ${template!.height}` }}
+                          />
+                        </a>
+                      ))}
+                    </div>
                   )}
                   {warnings.length > 0 && (
                     <ul className="space-y-1 rounded bg-amber-50 p-2 text-xs text-amber-900">
@@ -137,11 +141,19 @@ export default async function OutputsPage({ params }: { params: Promise<{ date: 
                     </ul>
                   )}
                   <div className="flex flex-wrap gap-2">
-                    {template!.formats.map((f) => (
-                      <a key={f} href={`${base}?format=${f}&download=1`} className="btn btn-sm">
-                        Download {f.toUpperCase()}
-                      </a>
-                    ))}
+                    {template!.formats.flatMap((f) =>
+                      f === "png" && (template!.pages ?? 1) > 1
+                        ? Array.from({ length: template!.pages! }, (_, i) => (
+                            <a key={`png${i}`} href={`${base}?format=png&page=${i + 1}&download=1`} className="btn btn-sm">
+                              PNG page {i + 1}
+                            </a>
+                          ))
+                        : [
+                            <a key={f} href={`${base}?format=${f}&download=1`} className="btn btn-sm">
+                              Download {f.toUpperCase()}
+                            </a>,
+                          ],
+                    )}
                   </div>
                 </div>
               </section>

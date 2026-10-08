@@ -21,6 +21,7 @@ export function fixture(overrides: Partial<RenderData> = {}): RenderData {
     titleHe: cal.shabbosTitle.he,
     yearHe: cal.hebrewYearHe,
     days: cal.days,
+    events: cal.events,
     schedule: {
       friday: [
         row("fri_shacharis", "Shacharis", "6:30 / 7:30AM", [390, 450]),

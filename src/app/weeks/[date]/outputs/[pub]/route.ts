@@ -19,13 +19,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ date: st
   const week = await getWeekByDate(date);
   if (!week) return new Response("Not found", { status: 404 });
 
-  const result = await renderPublication(week, pub, format);
+  const page = Math.max(1, Number(url.searchParams.get("page") ?? 1) || 1);
+  const result = await renderPublication(week, pub, format, page);
   const headers: Record<string, string> = {
     "Content-Type": result.contentType,
     "Cache-Control": "private, no-store",
   };
   if (url.searchParams.has("download")) {
-    headers["Content-Disposition"] = `attachment; filename="${outputFileName(week, pub, format)}"`;
+    const name = format === "png" && url.searchParams.has("page") ? `${pub}-page${page}` : pub;
+    headers["Content-Disposition"] = `attachment; filename="${outputFileName(week, name, format)}"`;
   }
   return new Response(new Uint8Array(result.data), { headers });
 }

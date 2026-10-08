@@ -58,31 +58,53 @@ export function buildHtml(template: OutputTemplate, data: RenderData): string {
   return documentShell({
     width: template.width,
     height: template.height,
+    pages: template.pages ?? 1,
     fonts: fontFaceCss(),
     css: template.css,
     body: template.render(data),
   });
 }
 
-export async function renderOutput(template: OutputTemplate, data: RenderData, format: "png" | "pdf"): Promise<RenderResult> {
+/**
+ * Render a template. PNG renders one page (`page`, 1-based) of a multi-page
+ * template; PDF renders all pages.
+ */
+export async function renderOutput(
+  template: OutputTemplate,
+  data: RenderData,
+  format: "png" | "pdf",
+  page = 1,
+): Promise<RenderResult> {
+  const pages = template.pages ?? 1;
+  if (page < 1 || page > pages) throw new Error(`Page ${page} doesn't exist`);
   const html = buildHtml(template, data);
-  const key = createHash("sha1").update(format).update(String(template.scale)).update(html).digest("hex");
+  const key = createHash("sha1").update(`${format}:${page}:${template.scale}`).update(html).digest("hex");
   const hit = cache.get(key);
   if (hit) return hit;
 
-  const page = await (await browser()).newPage({
+  const tab = await (await browser()).newPage({
     viewport: { width: template.width, height: template.height },
     deviceScaleFactor: format === "png" ? template.scale : 1,
   });
   try {
-    await page.setContent(html, { waitUntil: "load" });
-    await page.evaluate(() => document.fonts.ready);
-    const warnings = (await page.evaluate(FIT_SCRIPT)) as string[];
+    // Everything a page needs is embedded; block any network access.
+    await tab.route("**/*", (route) => route.abort());
+    await tab.setContent(html, { waitUntil: "load" });
+    await tab.evaluate(() => document.fonts.ready);
+    const warnings = (await tab.evaluate(FIT_SCRIPT)) as string[];
     const result: RenderResult =
       format === "png"
-        ? { data: await page.screenshot({ type: "png", fullPage: false }), contentType: "image/png", warnings }
+        ? {
+            data: await tab.screenshot({
+              type: "png",
+              fullPage: pages > 1,
+              clip: { x: 0, y: (page - 1) * template.height, width: template.width, height: template.height },
+            }),
+            contentType: "image/png",
+            warnings,
+          }
         : {
-            data: await page.pdf({ width: `${template.width}px`, height: `${template.height}px`, printBackground: true, preferCSSPageSize: true }),
+            data: await tab.pdf({ width: `${template.width}px`, height: `${template.height}px`, printBackground: true, preferCSSPageSize: true }),
             contentType: "application/pdf",
             warnings,
           };
@@ -90,6 +112,6 @@ export async function renderOutput(template: OutputTemplate, data: RenderData, f
     if (cache.size > CACHE_SIZE) cache.delete(cache.keys().next().value!);
     return result;
   } finally {
-    await page.close();
+    await tab.close();
   }
 }

@@ -7,12 +7,17 @@ import { renderOutput, type RenderResult } from "./renderer";
 import { TEMPLATES } from "./templates";
 
 /** Render one publication for a week. Throws if the publication has no template yet. */
-export async function renderPublication(week: Week, key: PublicationKey, format: "png" | "pdf"): Promise<RenderResult> {
+export async function renderPublication(
+  week: Week,
+  key: PublicationKey,
+  format: "png" | "pdf",
+  page = 1,
+): Promise<RenderResult> {
   const template = TEMPLATES[key];
   if (!template) throw new Error(`No template for ${key} yet`);
   if (!template.formats.includes(format)) throw new Error(`${key} isn't available as ${format.toUpperCase()}`);
   const data = await buildRenderData(week);
-  const result = await renderOutput(template, data, format);
+  const result = await renderOutput(template, data, format, page);
   const pending = data.pendingCount[key] ?? 0;
   return pending
     ? {

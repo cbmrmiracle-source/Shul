@@ -8,7 +8,7 @@
  * the caller supplies `imageUrl` to turn storage keys into links.
  */
 import type { RenderData, RenderItem, ScheduleRow } from "./data";
-import { bidi, formatText, html, raw, type HtmlValue, type SafeHtml } from "./html";
+import { bidi, formatInline, formatText, html, raw, type HtmlValue, type SafeHtml } from "./html";
 
 export interface EmailOptions {
   /** Public URL for an uploaded file's storage key. */
@@ -156,7 +156,7 @@ ${headline}${e.body ? text(e.body) : ""}${e.linkUrl ? button(e.linkUrl, e.linkLa
 <strong style="color:${C.gold};font-size:14px;text-transform:uppercase;letter-spacing:1px;">${sponsors.length > 1 ? "Co-Sponsored By" : "Sponsored By"}</strong><br><br>
 ${sponsors.map(
   (s) => html`${image(img(s), s.title)}<strong>${s.title}</strong><br>
-${s.body ? bidi(s.body) : ""}${s.fields.dedicationHe ? html` <bdi dir="rtl" lang="he">${s.fields.dedicationHe}</bdi>` : ""}<br><br>`,
+${s.body ? formatInline(s.body) : ""}${s.fields.dedicationHe ? html` <bdi dir="rtl" lang="he">${s.fields.dedicationHe}</bdi>` : ""}<br><br>`,
 )}
 ${d.org.emailSettings.sponsorNote ? html`<span style="color:${C.muted};">${d.org.emailSettings.sponsorNote}</span>` : ""}
 </div>`,

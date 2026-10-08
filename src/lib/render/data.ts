@@ -4,12 +4,13 @@ import path from "node:path";
 import { eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { Organization, Week } from "@/db/schema";
-import type { DayInfo } from "@/lib/calendar/week";
+import type { CalendarEvent, DayInfo } from "@/lib/calendar/week";
 import { listPublications, listWeekContent } from "@/lib/content/service";
 import type { ContentTypeKey, PublicationKey } from "@/lib/content/types";
 import type { ScheduleGroup } from "@/lib/schedule/rules";
 import { formatTime, formatTimeValue, type TimeValue } from "@/lib/time";
 import { storage } from "@/lib/storage";
+import { scheduleTimeFor } from "./schedule-match";
 import { effectiveCalendar, effectiveValue, getOrganization, listEntries } from "@/lib/weeks";
 
 export interface ScheduleRow {
@@ -48,6 +49,8 @@ export interface RenderData {
   titleHe: string;
   yearHe: string;
   days: DayInfo[];
+  /** Rosh Chodesh, fasts, holidays, Mevorchim, molad… for the week. */
+  events: CalendarEvent[];
   schedule: Record<ScheduleGroup, ScheduleRow[]>;
   candleLighting: string;
   shabbosEnds: string;
@@ -127,7 +130,7 @@ export async function buildRenderData(week: Week): Promise<RenderData> {
           body: v.body || i.body,
           fields: i.fields,
           eventDate: i.eventDate,
-          eventTime: i.eventTime,
+          eventTime: i.eventTime || (i.type === "shiur" ? scheduleTimeFor(schedule, i.title) : ""),
           hebrewDate: i.hebrewDate,
           linkUrl: i.linkUrl,
           linkLabel: i.linkLabel,
@@ -154,6 +157,7 @@ export async function buildRenderData(week: Week): Promise<RenderData> {
     titleHe: cal.shabbosTitle.he,
     yearHe: cal.hebrewYearHe,
     days: cal.days,
+    events: cal.events,
     schedule,
     candleLighting: rowDisplay(schedule.friday, "candle_lighting", cal.days[0].zmanim.candleLighting, formatTime),
     shabbosEnds: rowDisplay(schedule.shabbos, "shabbos_ends", cal.days[1].zmanim.shabbosEnds, formatTime),

@@ -44,22 +44,34 @@ export function raw(s: string): SafeHtml {
   return new SafeHtml(s);
 }
 
+const HEBREW_RUN = /[\u0590-\u05FF][\u0590-\u05FF\s"'׳״\-.,]*[\u0590-\u05FF׳״"']|[\u0590-\u05FF]/g;
+
+/** Escape, then apply **bold**, isolate Hebrew runs, and turn newlines into <br>. */
+function inlineMarkup(text: string): string {
+  return escapeHtml(text)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(HEBREW_RUN, (m) => `<bdi dir="rtl" lang="he" class="he">${m}</bdi>`)
+    .replace(/\n/g, "<br>");
+}
+
 /**
  * Minimal formatting for text people type: escapes everything, turns
- * **bold** into <strong>, and line breaks into <br>. Blank lines start a paragraph.
+ * **bold** into <strong>, wraps Hebrew so it reads correctly inside English,
+ * and keeps line breaks. Blank lines start a paragraph.
  */
 export function formatText(text: string): SafeHtml {
-  const paragraphs = text.trim().split(/\n\s*\n/);
   return raw(
-    paragraphs
-      .map(
-        (p) =>
-          `<p>${escapeHtml(p)
-            .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-            .replace(/\n/g, "<br>")}</p>`,
-      )
+    text
+      .trim()
+      .split(/\n\s*\n/)
+      .map((p) => `<p>${inlineMarkup(p)}</p>`)
       .join(""),
   );
+}
+
+/** The same formatting without paragraph tags, for text inside a line. */
+export function formatInline(text: string): SafeHtml {
+  return raw(inlineMarkup(text.trim()));
 }
 
 /** Wrap right-to-left text so it doesn't scramble surrounding punctuation. */

@@ -18,10 +18,14 @@ async function main() {
   await mkdir(outDir, { recursive: true });
   for (const [key, template] of Object.entries(TEMPLATES)) {
     for (const format of template!.formats) {
-      const result = await renderOutput(template!, data, format);
-      const file = path.join(outDir, `${date}-${key}.${format}`);
-      await writeFile(file, result.data);
-      console.log(file, result.warnings.length ? result.warnings : "");
+      const pages = format === "png" ? (template!.pages ?? 1) : 1;
+      for (let page = 1; page <= pages; page++) {
+        const result = await renderOutput(template!, data, format, page);
+        const suffix = pages > 1 ? `-p${page}` : "";
+        const file = path.join(outDir, `${date}-${key}${suffix}.${format}`);
+        await writeFile(file, result.data);
+        console.log(file, result.warnings.length ? result.warnings : "");
+      }
     }
   }
   process.exit(0);
