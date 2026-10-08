@@ -17,7 +17,7 @@ describe.skipIf(!url)("week service (database)", () => {
     const postgres = (await import("postgres")).default;
     const sql = postgres(url!, { max: 1, onnotice: () => {} });
     await migrate(drizzle(sql), { migrationsFolder: "./drizzle" });
-    await sql`truncate organization, schedule_profile, schedule_slot, week, schedule_entry restart identity cascade`;
+    await sql`truncate organization, schedule_profile, schedule_slot, week, schedule_entry, publication, asset, content_item, placement, content_week_skip, person_date, person_import restart identity cascade`;
     await sql.end();
     await (await import("@/lib/seed")).seedDefaults();
     svc = await import("@/lib/weeks");

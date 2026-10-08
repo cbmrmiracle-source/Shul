@@ -1,5 +1,6 @@
 "use client";
 
+import { keepFormOnSubmit } from "@/components/use-keep-form";
 import { useActionState } from "react";
 import type { Organization } from "@/db/schema";
 import { saveSettings } from "./actions";
@@ -32,7 +33,7 @@ export function SettingsForm({ org }: { org: Organization }) {
     .join("\n");
 
   return (
-    <form action={action} className="space-y-6">
+    <form onSubmit={keepFormOnSubmit(action)} className="space-y-6">
       <section className="card p-5">
         <h2 className="mb-4 font-semibold text-navy">Shul</h2>
         <div className="grid gap-4 md:grid-cols-2">

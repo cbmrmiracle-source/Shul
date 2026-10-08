@@ -1,5 +1,6 @@
 "use client";
 
+import { keepFormOnSubmit } from "@/components/use-keep-form";
 import { useActionState, useState } from "react";
 import type { ScheduleProfile, ScheduleSlot } from "@/db/schema";
 import { ZMAN_KEYS, ZMAN_LABELS } from "@/lib/calendar/zman-keys";
@@ -130,7 +131,7 @@ export function SlotEditor({ slot, slotOptions }: { slot: ScheduleSlot; slotOpti
       </div>
       {editing && (
         <div className="mt-2 space-y-2 rounded-lg bg-stone-50 p-3">
-          <form action={action} className="space-y-2">
+          <form onSubmit={keepFormOnSubmit(action)} className="space-y-2">
             <input type="hidden" name="slotId" value={slot.id} />
             <div className="flex flex-wrap gap-2">
               <input name="label" defaultValue={slot.label} required className="input w-56" />
@@ -171,7 +172,7 @@ export function NewSlotForm({ profileId, group, slotOptions }: { profileId: numb
   return (
     <details className="border-t border-stone-100 px-4 py-2">
       <summary className="cursor-pointer text-xs text-navy">+ Add a row</summary>
-      <form action={action} className="mt-2 space-y-2">
+      <form onSubmit={keepFormOnSubmit(action)} className="mt-2 space-y-2">
         <input type="hidden" name="profileId" value={profileId} />
         <input type="hidden" name="group" value={group} />
         <div className="flex flex-wrap gap-2">
@@ -193,7 +194,7 @@ export function NewSlotForm({ profileId, group, slotOptions }: { profileId: numb
 export function ProfileForm({ profile }: { profile: ScheduleProfile }) {
   const [state, action, pending] = useActionState(saveProfile, null);
   return (
-    <form action={action} className="card flex flex-wrap items-end gap-3 p-5">
+    <form onSubmit={keepFormOnSubmit(action)} className="card flex flex-wrap items-end gap-3 p-5">
       <input type="hidden" name="profileId" value={profile.id} />
       <label className="block">
         <span className="text-sm font-medium">Profile name</span>

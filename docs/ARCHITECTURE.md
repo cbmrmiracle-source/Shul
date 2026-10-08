@@ -1,6 +1,6 @@
 # Shul Communications Platform — Architecture Proposal
 
-**Status:** APPROVED (Oct 8, 2026). Phases 0 and 1 are built. See "Decisions" below.
+**Status:** APPROVED (Oct 8, 2026). Phases 0, 1, 2 and the paste-in part of 7 are built. See "Decisions" below.
 **Reference week:** Parshas Ki Savo 5786 (Shabbos 16 Elul / Aug 29, 2026)
 
 
@@ -15,6 +15,9 @@
 | WhatsApp images | `Weeklys.pdf` pages 5–6 are treated as the Weekly and Shabbos WhatsApp images |
 | Yahrzeits sheet | `https://docs.google.com/spreadsheets/d/1_YLvoMIp1YxPuQvhptD8MlfzvUlZnx-VlklVpoYZd6E` |
 | Birthdays sheet | `https://docs.google.com/spreadsheets/d/1DP49PNV6viOC4VtQmwNUxeJhb0VufBddSbWsX4L2ms8` |
+
+| Yahrzeit/birthday input | **Paste-in instead of a live Google Sheets connection** (director's choice). Copy the sheet, paste it on the Yahrzeits & Birthdays page, confirm the column matching once (it's remembered) |
+| Content types | Defined in code (`src/lib/content/types.ts`) rather than a database table, so each type's form and template stay in sync. New ad-hoc blocks use the **Custom Block** type, which needs no developer |
 
 > The two sheet URLs above are given in the order provided. Phase 7 will confirm which is which,
 > and the column layout, by reading the header rows. The simplest connection is for each sheet to

@@ -5,6 +5,7 @@ import { computeWeek, type DayInfo, type WeekCalendar } from "@/lib/calendar/wee
 import type { DayZmanim } from "@/lib/calendar/zmanim";
 import { evaluateSlots, ruleSchema, type GroupZmanim } from "@/lib/schedule/rules";
 import type { TimeValue } from "@/lib/time";
+import { generateAnniversaryItems } from "@/lib/content/service";
 
 export async function getOrganization(): Promise<Organization> {
   const [org] = await db.select().from(schema.organization).limit(1);
@@ -102,8 +103,9 @@ export async function createWeek(shabbosDate: string): Promise<Week> {
 
 /**
  * Recompute everything automatic for a week: the calendar snapshot and the
- * auto value of each rule-based schedule row. Overrides, hidden flags and
- * manual rows are never modified.
+ * auto value of each rule-based schedule row, then add any yahrzeits and
+ * birthdays that fall in the week. Overrides, hidden flags, manual rows and
+ * reviewed items are never modified.
  */
 export async function syncWeek(weekId: number): Promise<void> {
   const org = await getOrganization();
@@ -176,6 +178,9 @@ export async function syncWeek(weekId: number): Promise<void> {
       }
     }
   });
+
+  const [w] = await db.select().from(schema.week).where(eq(schema.week.id, weekId));
+  await generateAnniversaryItems(w);
 }
 
 /** The value that gets published for a schedule row. */

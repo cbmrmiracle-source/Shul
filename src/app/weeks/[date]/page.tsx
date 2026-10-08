@@ -8,6 +8,8 @@ import { formatTime } from "@/lib/time";
 import { effectiveCalendar, getOrganization, getWeekByDate, listEntries } from "@/lib/weeks";
 import { resyncWeek, saveTitleOverrides, saveZmanOverride } from "./actions";
 import { AddEntryForm, ScheduleRow } from "./schedule-row";
+import { ContentSection } from "./content-section";
+import { listPublications, listWeekContent } from "@/lib/content/service";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +34,12 @@ export default async function WeekPage({ params }: { params: Promise<{ date: str
   const week = await getWeekByDate(date);
   if (!week) notFound();
 
-  const [entries, org] = await Promise.all([listEntries(week.id), getOrganization()]);
+  const [entries, org, items, pubs] = await Promise.all([
+    listEntries(week.id),
+    getOrganization(),
+    listWeekContent(week),
+    listPublications(),
+  ]);
   const auto = week.calendarAuto;
   const cal = effectiveCalendar(auto, week.calendarOverrides);
   const first = cal.days[0];
@@ -211,9 +218,7 @@ export default async function WeekPage({ params }: { params: Promise<{ date: str
         })}
       </section>
 
-      <section className="card p-5 text-sm text-stone-500">
-        Content (sponsors, events, mazal tov, yahrzeits, birthdays…) and publication previews are coming in the next phases.
-      </section>
+      <ContentSection items={items} pubs={pubs} date={date} />
     </div>
   );
 }

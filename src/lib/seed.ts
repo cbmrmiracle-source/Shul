@@ -2,6 +2,7 @@ import { db, schema } from "@/db";
 import { DEFAULT_HOUSE_SPELLINGS } from "@/lib/calendar/week";
 import { DEFAULT_ZMANIM_SETTINGS } from "@/lib/calendar/zmanim";
 import type { ScheduleGroup, ScheduleRule } from "@/lib/schedule/rules";
+import { ensurePublications } from "@/lib/content/service";
 
 const t = (h: number, m = 0) => h * 60 + m;
 
@@ -58,6 +59,8 @@ export async function seedDefaults(): Promise<string> {
     );
     notes.push(`Created profile "${profile.name}" with ${SUMMER_SLOTS.length} slots.`);
   }
+
+  await ensurePublications();
 
   return notes.length ? notes.join("\n") : "Nothing to seed; data already present.";
 }

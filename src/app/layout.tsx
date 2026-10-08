@@ -23,6 +23,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               </Link>
               <nav className="flex gap-4 text-sm text-white/80">
                 <Link href="/" className="hover:text-white">Weeks</Link>
+                <Link href="/people" className="hover:text-white">Yahrzeits &amp; Birthdays</Link>
                 <Link href="/profiles" className="hover:text-white">Davening Profiles</Link>
                 <Link href="/settings" className="hover:text-white">Settings</Link>
               </nav>
