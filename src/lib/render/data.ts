@@ -34,12 +34,16 @@ export interface RenderItem {
   linkLabel: string;
   /** data: URL, or null */
   image: string | null;
+  /** Storage key of the image, for building a public URL (email). */
+  imageKey: string | null;
 }
 
 export interface RenderData {
-  org: Pick<Organization, "name" | "address" | "phone" | "email" | "website">;
+  org: Pick<Organization, "name" | "address" | "phone" | "email" | "website" | "emailSettings">;
   /** data: URL of the logo */
   logo: string;
+  /** Storage key of the uploaded logo; null means the bundled placeholder. */
+  logoKey: string | null;
   titleEn: string;
   titleHe: string;
   yearHe: string;
@@ -96,9 +100,11 @@ export async function buildRenderData(week: Week): Promise<RenderData> {
   const visible = items.filter((i) => !i.hidden && !i.skipped);
   const imageIds = [...new Set(visible.map((i) => i.imageAssetId).filter((x): x is number => x !== null))];
   const images = new Map<number, string>();
+  const imageKeys = new Map<number, string>();
   if (imageIds.length) {
     const assets = await db.select().from(schema.asset).where(inArray(schema.asset.id, imageIds));
     for (const a of assets) {
+      imageKeys.set(a.id, a.storageKey);
       const data = await storage.get(a.storageKey).catch(() => null);
       if (data) images.set(a.id, `data:${a.mime};base64,${data.toString("base64")}`);
     }
@@ -126,13 +132,24 @@ export async function buildRenderData(week: Week): Promise<RenderData> {
           linkUrl: i.linkUrl,
           linkLabel: i.linkLabel,
           image: v.hideImage || !i.imageAssetId ? null : (images.get(i.imageAssetId) ?? null),
+          imageKey: v.hideImage || !i.imageAssetId ? null : (imageKeys.get(i.imageAssetId) ?? null),
         };
       });
   }
 
   return {
-    org: { name: org.name, address: org.address, phone: org.phone, email: org.email, website: org.website },
+    org: {
+      name: org.name,
+      address: org.address,
+      phone: org.phone,
+      email: org.email,
+      website: org.website,
+      emailSettings: org.emailSettings,
+    },
     logo: await logoDataUrl(org),
+    logoKey: org.logoAssetId
+      ? ((await db.select({ k: schema.asset.storageKey }).from(schema.asset).where(eq(schema.asset.id, org.logoAssetId)))[0]?.k ?? null)
+      : null,
     titleEn: cal.shabbosTitle.en,
     titleHe: cal.shabbosTitle.he,
     yearHe: cal.hebrewYearHe,

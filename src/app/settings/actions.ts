@@ -34,6 +34,9 @@ const settingsSchema = z.object({
   roundCandleLighting: roundMode,
   roundShabbosEnds: roundMode,
   houseSpellings: z.string(),
+  newsletterName: z.string().trim().max(200),
+  sponsorNote: z.string().trim().max(1000),
+  footerNote: z.string().trim().max(1000),
 });
 
 /** "Bereshis = Bereishis" per line → { Bereshis: "Bereishis" } */
@@ -86,6 +89,7 @@ export async function saveSettings(_prev: string | null, form: FormData): Promis
       zmanim,
       houseSpellings: parseSpellings(s.houseSpellings),
       logoAssetId,
+      emailSettings: { newsletterName: s.newsletterName, sponsorNote: s.sponsorNote, footerNote: s.footerNote },
     })
     .where(eq(schema.organization.id, org.id));
   const n = await resyncOpenWeeks();

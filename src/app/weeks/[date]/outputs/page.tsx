@@ -4,7 +4,9 @@ import { requireAuth } from "@/lib/auth/server";
 import { isCivilDate } from "@/lib/calendar/dates";
 import { listPublications } from "@/lib/content/service";
 import type { PublicationKey } from "@/lib/content/types";
-import { renderPublication } from "@/lib/render/service";
+import { headers } from "next/headers";
+import { publicBaseUrl, renderEmailForWeek, renderPublication } from "@/lib/render/service";
+import { CopyEmailHtml, CopyText } from "./copy-buttons";
 import { TEMPLATES } from "@/lib/render/templates";
 import { getWeekByDate } from "@/lib/weeks";
 
@@ -34,6 +36,10 @@ export default async function OutputsPage({ params }: { params: Promise<{ date: 
     }),
   );
   const version = week.updatedAt.getTime() + "-" + Date.now();
+  const h = await headers();
+  const origin = `${h.get("x-forwarded-proto") ?? "http"}://${h.get("x-forwarded-host") ?? h.get("host")}`;
+  const email = await renderEmailForWeek(week, publicBaseUrl(origin));
+  const emailUrl = `/weeks/${date}/email`;
 
   return (
     <div className="space-y-6">
@@ -47,6 +53,57 @@ export default async function OutputsPage({ params }: { params: Promise<{ date: 
           here to see it updated.
         </p>
       </div>
+
+      <section className="card overflow-hidden">
+        <div className="card-header">
+          <h2 className="font-semibold text-navy">Email Newsletter</h2>
+          <div className="flex flex-wrap gap-2">
+            <CopyEmailHtml url={emailUrl} />
+            <a href={`${emailUrl}?download=1`} className="btn">
+              Download .html
+            </a>
+            <a href={emailUrl} target="_blank" rel="noreferrer" className="btn">
+              Open in new tab
+            </a>
+          </div>
+        </div>
+        <div className="grid gap-4 px-4 pb-4 lg:grid-cols-[1fr_640px]">
+          <div className="space-y-3 text-sm">
+            <div>
+              <div className="text-xs font-semibold text-stone-500 uppercase">Subject</div>
+              <div className="flex items-center gap-2">
+                <span className="font-medium">{email.subject}</span>
+                <CopyText text={email.subject} />
+              </div>
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-stone-500 uppercase">Preview text</div>
+              <div className="flex items-center gap-2">
+                <span>{email.preheader}</span>
+                <CopyText text={email.preheader} />
+              </div>
+            </div>
+            {email.warnings.length > 0 && (
+              <ul className="space-y-1 rounded bg-amber-50 p-2 text-xs text-amber-900">
+                {email.warnings.map((w) => (
+                  <li key={w}>⚠ {w}</li>
+                ))}
+              </ul>
+            )}
+            <div className="rounded bg-stone-50 p-3 text-xs text-stone-600">
+              <strong>To send with Mailchimp:</strong> click <em>Copy HTML for Mailchimp</em>, then in Mailchimp create the
+              campaign, choose <em>Code your own → Paste in code</em>, select all and paste. Mailchimp adds its own
+              unsubscribe footer.
+            </div>
+          </div>
+          <iframe
+            src={`${emailUrl}?v=${version}`}
+            title="Email preview"
+            sandbox=""
+            className="h-[900px] w-full rounded border border-stone-200 bg-[#f2f2f2]"
+          />
+        </div>
+      </section>
 
       <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
         {outputs
@@ -95,7 +152,7 @@ export default async function OutputsPage({ params }: { params: Promise<{ date: 
       <section className="card p-5 text-sm text-stone-600">
         <h2 className="mb-1 font-semibold text-navy">Coming in later phases</h2>
         {outputs
-          .filter((o) => !o.template)
+          .filter((o) => !o.template && o.pub.key !== "email")
           .map((o) => o.pub.name)
           .join(" · ")}
       </section>

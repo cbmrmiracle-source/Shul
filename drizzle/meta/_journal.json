@@ -22,6 +22,13 @@
       "when": 1791482408740,
       "tag": "0002_org_logo",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1791484559285,
+      "tag": "0003_email_settings",
+      "breakpoints": true
     }
   ]
 }

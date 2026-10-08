@@ -27,6 +27,15 @@ const timestamps = {
     .$onUpdate(() => new Date()),
 };
 
+export interface EmailSettings {
+  /** Newsletter name used in the subject line, e.g. "The Shabbos Connection". */
+  newsletterName?: string;
+  /** Shown under the sponsors, e.g. "To sponsor a kiddush, please reach out to …". */
+  sponsorNote?: string;
+  /** Extra lines in the footer. */
+  footerNote?: string;
+}
+
 /** The shul. There is one row; settings live here so they can be edited in the app. */
 export const organization = pgTable("organization", {
   id: serial("id").primaryKey(),
@@ -39,6 +48,8 @@ export const organization = pgTable("organization", {
   /** Uploaded logo; templates fall back to the bundled placeholder when unset. */
   logoAssetId: integer("logo_asset_id").references((): AnyPgColumn => asset.id, { onDelete: "set null" }),
   zmanim: jsonb("zmanim").$type<ZmanimSettings>().notNull(),
+  /** Fixed wording used in the email newsletter. */
+  emailSettings: jsonb("email_settings").$type<EmailSettings>().notNull().default({}),
   /** Spelling fixes on top of Hebcal's Ashkenazi names, e.g. Bereshis → Bereishis. */
   houseSpellings: jsonb("house_spellings").$type<Record<string, string>>().notNull().default({}),
   ...timestamps,

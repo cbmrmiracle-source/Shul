@@ -44,6 +44,10 @@ export async function seedDefaults(): Promise<string> {
       website: "https://chabadftlauderdale.com",
       zmanim: DEFAULT_ZMANIM_SETTINGS,
       houseSpellings: DEFAULT_HOUSE_SPELLINGS,
+      emailSettings: {
+        newsletterName: "The Shabbos Connection",
+        sponsorNote: "If you would like to sponsor or co-sponsor a kiddush, please reach out to Sholom Katz at: 917-494-2136",
+      },
     });
     notes.push("Created organization.");
   }

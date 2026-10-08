@@ -1,51 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { computeWeek } from "@/lib/calendar/week";
-import { DEFAULT_ZMANIM_SETTINGS } from "@/lib/calendar/zmanim";
-import type { RenderData, ScheduleRow } from "@/lib/render/data";
+import { fixture, row } from "./fixtures";
 import { buildHtml, renderOutput } from "@/lib/render/renderer";
 import { TEMPLATES } from "@/lib/render/templates";
-
-const row = (key: string, label: string, display: string, times: number[] | null, note = ""): ScheduleRow => ({
-  key,
-  label,
-  note,
-  display,
-  value: times ? { times } : { text: display },
-});
-
-/** The Ki Savo 5786 week as in the sample newsletter. */
-function fixture(overrides: Partial<RenderData> = {}): RenderData {
-  const cal = computeWeek("2026-08-29", DEFAULT_ZMANIM_SETTINGS);
-  return {
-    org: { name: "Chabad of Inverrary", address: "", phone: "", email: "", website: "" },
-    logo: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
-    titleEn: cal.shabbosTitle.en,
-    titleHe: cal.shabbosTitle.he,
-    yearHe: cal.hebrewYearHe,
-    days: cal.days,
-    schedule: {
-      friday: [
-        row("fri_shacharis", "Shacharis", "6:30 / 7:30AM", [390, 450]),
-        row("candle_lighting", "Candle Lighting", "7:27PM", [1167]),
-        row("fri_mincha", "Mincha", "7:35PM", [1175]),
-        row("kabolas_shabbos", "Kabolas Shabbos", "7:55PM", [1195]),
-      ],
-      shabbos: [
-        row("chassidus", "Chassidus", "9:15AM", [555]),
-        row("shabbos_shacharis", "Shacharis", "10:00AM", [600], "Followed by Farbrengen"),
-        row("shabbos_mincha", "Mincha", "7:25PM", [1165]),
-        row("shabbos_ends", "Maariv / Shabbos Ends", "8:18PM", [1218]),
-      ],
-      sunday: [row("sun_shacharis", "Shacharis", "7 / 8:15 / 9AM", [420, 495, 540]), row("sun_mincha", "Mincha", "7:30PM", [1170])],
-      weekday: [row("wk_shacharis", "Shacharis", "6:30 / 7:30AM", [390, 450]), row("wk_maariv", "Maariv", "B'zman", null)],
-    },
-    candleLighting: "7:27PM",
-    shabbosEnds: "8:18PM",
-    items: {},
-    pendingCount: {},
-    ...overrides,
-  };
-}
 
 describe("templates (HTML)", () => {
   it("davening poster lists every group with dates", () => {
@@ -64,7 +20,7 @@ describe("templates (HTML)", () => {
   });
 
   it("Shabbos WhatsApp shows candle lighting, the eruv, and leaves morning rows out of Friday night", () => {
-    const eruv = { id: 1, type: "eruv" as const, title: "", body: "", fields: { status: "kosher" }, eventDate: null, eventTime: "", hebrewDate: "", linkUrl: "", linkLabel: "", image: null };
+    const eruv = { id: 1, type: "eruv" as const, title: "", body: "", fields: { status: "kosher" }, eventDate: null, eventTime: "", hebrewDate: "", linkUrl: "", linkLabel: "", image: null, imageKey: null };
     const out = buildHtml(TEMPLATES.whatsapp_shabbos!, fixture({ items: { whatsapp_shabbos: [eruv] } }));
     expect(out).toContain("Candle Lighting - 7:27PM");
     expect(out).toContain("The Eruv is Kosher");

@@ -69,6 +69,27 @@ export function SettingsForm({ org }: { org: Organization }) {
       </section>
 
       <section className="card p-5">
+        <h2 className="mb-4 font-semibold text-navy">Email newsletter</h2>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field
+            label="Newsletter name (for the subject line)"
+            name="newsletterName"
+            defaultValue={org.emailSettings.newsletterName ?? ""}
+            placeholder="The Shabbos Connection"
+          />
+          <div />
+          <label className="block">
+            <span className="text-sm font-medium">Note under the sponsors</span>
+            <textarea name="sponsorNote" defaultValue={org.emailSettings.sponsorNote ?? ""} rows={2} className="input mt-1 w-full" />
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium">Extra footer text</span>
+            <textarea name="footerNote" defaultValue={org.emailSettings.footerNote ?? ""} rows={2} className="input mt-1 w-full" />
+          </label>
+        </div>
+      </section>
+
+      <section className="card p-5">
         <h2 className="mb-1 font-semibold text-navy">Zmanim</h2>
         <p className="mb-4 text-sm text-stone-500">
           Defaults follow Chabad.org&apos;s regular opinion. Changing these recalculates every week that isn&apos;t final.

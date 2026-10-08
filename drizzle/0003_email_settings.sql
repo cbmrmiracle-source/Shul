@@ -1,0 +1,1 @@
+ALTER TABLE "organization" ADD COLUMN "email_settings" jsonb DEFAULT '{}'::jsonb NOT NULL;

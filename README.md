@@ -15,7 +15,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and roadmap.
 | 2 — Content core | ✅ | Content items for every type, per-publication placement & wording, recurring items, images, review status, placement grid |
 | 7 — Yahrzeits & birthdays | ✅ (paste-in) | Paste the spreadsheet; each week lists matches for review |
 | 3 — Render engine | ✅ | Davening poster (PNG + PDF), Shabbos & Weekly WhatsApp images (1080×1080) |
-| 4 — Email | ⏳ next | |
+| 4 — Email | ✅ | Email newsletter matching the Mailchimp design; preview, Copy HTML, download, subject & preview text |
+| 5 — Print newsletter | ⏳ next | |
 
 ## Running locally
 
@@ -70,6 +71,10 @@ npm run render -- 2026-08-29 ./out   # write every output for a week to files
 
 Locally, Chromium comes from Playwright (`npx playwright-core install chromium`), or set `CHROMIUM_PATH`.
 The Docker image is based on Playwright's, which includes it.
+
+**Email:** the email card on the Outputs screen has *Copy HTML for Mailchimp* (paste into Mailchimp's
+"Code your own → Paste in code"). Images in the email use public, unguessable links under `/media/…`
+(Mailchimp and inboxes can't sign in); set `PUBLIC_BASE_URL` to the app's public address so those links work.
 
 Upload the shul's logo in **Settings**; until then a placeholder cut from a sample image is used.
 
