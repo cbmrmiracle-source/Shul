@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+/* Brand colors taken from the newsletter and email samples. */
+@theme {
+  --color-navy: #1f3a5f;
+  --color-navy-dark: #152a46;
+  --color-gold: #c6a43c;
+  --color-gold-light: #f0d57a;
+  --color-cream: #fbf8f1;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-hebrew: "Frank Ruhl Libre", "David", "Times New Roman", serif;
+}
+
+body {
+  background: var(--color-cream);
+  color: #1c1917;
+}
+
+@layer components {
+  .input {
+    @apply rounded-md border border-stone-300 bg-white px-2.5 py-1.5 text-sm shadow-xs focus:border-navy focus:ring-1 focus:ring-navy focus:outline-none;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1 rounded-md border border-stone-300 bg-white px-3 py-1.5 text-sm font-medium hover:bg-stone-50 disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-1 rounded-md bg-navy px-3 py-1.5 text-sm font-medium text-white hover:bg-navy-dark disabled:opacity-50;
+  }
+  .btn-sm {
+    @apply px-2 py-0.5 text-xs;
+  }
+  .card {
+    @apply rounded-xl border border-stone-200 bg-white shadow-sm;
+  }
+  .card-header {
+    @apply flex items-center justify-between gap-2 border-t-4 border-navy rounded-t-xl px-4 pt-3 pb-2;
+  }
+  .badge {
+    @apply inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase;
+  }
+  .badge-auto {
+    @apply inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase bg-sky-100 text-sky-800;
+  }
+  .badge-override {
+    @apply inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase bg-amber-100 text-amber-900;
+  }
+  .badge-manual {
+    @apply inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase bg-stone-200 text-stone-700;
+  }
+  .badge-error {
+    @apply inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase bg-red-100 text-red-800;
+  }
+  .hebrew {
+    font-family: var(--font-hebrew);
+    direction: rtl;
+    unicode-bidi: isolate;
+  }
+}

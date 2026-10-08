@@ -1,7 +1,25 @@
 # Shul Communications Platform — Architecture Proposal
 
-**Status:** DRAFT. Waiting for approval. No application code has been written yet.
+**Status:** APPROVED (Oct 8, 2026). Phases 0 and 1 are built. See "Decisions" below.
 **Reference week:** Parshas Ki Savo 5786 (Shabbos 16 Elul / Aug 29, 2026)
+
+
+## Decisions (Oct 8, 2026)
+
+| Topic | Decision |
+|---|---|
+| Users | Just the communications director, so login is **one password** (`APP_PASSWORD`) rather than Google sign-in. Roles can be added later |
+| Zmanim | Chabad.org's regular opinion: Alter Rebbe zmanim, candle lighting 18 min before shkiah, Shabbos ends at 8.5°. Computed locally for the shul's coordinates. Verified against the Ki Savo sample: 7:27PM candle lighting, 8:18PM Shabbos ends, 8:06PM Sunday Maariv (6° tzeis) |
+| Chabad.org articles | Paste-the-source: the director pastes the Parsha / Jewish History text, and the AI rewrites it |
+| Budget | $15–25/month hosting is acceptable |
+| WhatsApp images | `Weeklys.pdf` pages 5–6 are treated as the Weekly and Shabbos WhatsApp images |
+| Yahrzeits sheet | `https://docs.google.com/spreadsheets/d/1_YLvoMIp1YxPuQvhptD8MlfzvUlZnx-VlklVpoYZd6E` |
+| Birthdays sheet | `https://docs.google.com/spreadsheets/d/1DP49PNV6viOC4VtQmwNUxeJhb0VufBddSbWsX4L2ms8` |
+
+> The two sheet URLs above are given in the order provided. Phase 7 will confirm which is which,
+> and the column layout, by reading the header rows. The simplest connection is for each sheet to
+> be shared as "Anyone with the link can view". The app then reads it as CSV with no Google account
+> setup. A Google service account is the alternative if the sheets must stay private.
 
 ---
 
@@ -141,7 +159,7 @@ That means one language end to end, mainstream libraries, and boring infrastruct
 | AI | **Claude API** (Anthropic) | Summarizing and rewriting with your glossary and style rules |
 | Background jobs | **pg-boss** (queue inside Postgres) | No extra infrastructure. Retries for syncs, renders, and AI |
 | File storage | S3-compatible (Cloudflare R2 or AWS S3) | Images, generated PDFs and PNGs |
-| Auth | Auth.js with Google sign-in plus an email allow-list | No passwords to manage. Add helpers later |
+| Auth | Single password + signed HTTP-only cookie (see Decisions) | One user. Can move to Auth.js later if more people need access |
 | Hosting | One Docker container (Railway / Render / Fly.io) + managed Postgres | Playwright needs a real server, not serverless. About $10–25/month |
 | Tests | Vitest (logic), Playwright (visual snapshots of each template) | Visual tests catch a template change that breaks the newsletter layout |
 
