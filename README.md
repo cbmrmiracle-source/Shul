@@ -17,7 +17,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and roadmap.
 | 3 — Render engine | ✅ | Davening poster (PNG + PDF), Shabbos & Weekly WhatsApp images (1080×1080) |
 | 4 — Email | ✅ | Email newsletter matching the Mailchimp design; preview, Copy HTML, download, subject & preview text |
 | 5 — Print newsletter | ✅ | "The Shabbos Connection", two-sided Letter PDF, columns shrink to fit and are flagged |
-| 6 — Remaining posters | ⏳ next | Farbrengen, Kids, Sicha Shiur |
+| 6 — Remaining posters | ✅ | Farbrengen, Children's Programs (with status badges), Sicha Shiur |
+| 8 — AI content | ⏳ next | Parsha in a Nutshell, Jewish History, glossary |
 
 ## Running locally
 
@@ -71,7 +72,8 @@ npm run render -- 2026-08-29 ./out   # write every output for a week to files
 npm run demo                         # (dev) fill Ki Savo 5786 with the sample newsletter's content
 ```
 
-Section icons are Twemoji images (graphics © Twitter/X, CC-BY 4.0), because headless Chromium can't draw colour
+Poster artwork (backgrounds, KIDS logo, illustrations, "We're back" badge) is in `assets/templates/`, taken from
+the shul's existing designs. Section icons are Twemoji images (graphics © Twitter/X, CC-BY 4.0), because headless Chromium can't draw colour
 emoji fonts.
 
 Locally, Chromium comes from Playwright (`npx playwright-core install chromium`), or set `CHROMIUM_PATH`.

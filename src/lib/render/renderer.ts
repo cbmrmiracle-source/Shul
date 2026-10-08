@@ -60,7 +60,7 @@ export function buildHtml(template: OutputTemplate, data: RenderData): string {
     height: template.height,
     pages: template.pages ?? 1,
     fonts: fontFaceCss(),
-    css: template.css,
+    css: typeof template.css === "function" ? template.css() : template.css,
     body: template.render(data),
   });
 }

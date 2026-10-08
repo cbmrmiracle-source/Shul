@@ -3,6 +3,9 @@ import type { RenderData } from "../data";
 import type { SafeHtml } from "../html";
 import * as daveningPoster from "./davening-poster";
 import * as newsletter from "./newsletter";
+import * as posterFarbrengen from "./poster-farbrengen";
+import * as posterKids from "./poster-kids";
+import * as posterSicha from "./poster-sicha";
 import * as whatsappShabbos from "./whatsapp-shabbos";
 import * as whatsappWeekly from "./whatsapp-weekly";
 
@@ -15,7 +18,8 @@ export interface OutputTemplate {
   /** Number of pages (default 1). Each page is width × height. */
   pages?: number;
   formats: ("png" | "pdf")[];
-  css: string;
+  /** CSS, or a function returning it (for CSS that embeds artwork, built on first use). */
+  css: string | (() => string);
   render: (data: RenderData) => SafeHtml;
 }
 
@@ -23,6 +27,9 @@ export interface OutputTemplate {
 export const TEMPLATES: Partial<Record<PublicationKey, OutputTemplate>> = {
   newsletter: { ...newsletter, width: newsletter.WIDTH, height: newsletter.HEIGHT, pages: newsletter.PAGES, scale: 2, formats: ["pdf", "png"] },
   poster_davening: { ...daveningPoster, width: daveningPoster.WIDTH, height: daveningPoster.HEIGHT, scale: 2, formats: ["png", "pdf"] },
+  poster_farbrengen: { ...posterFarbrengen, width: posterFarbrengen.WIDTH, height: posterFarbrengen.HEIGHT, scale: 2, formats: ["png", "pdf"] },
+  poster_kids: { ...posterKids, width: posterKids.WIDTH, height: posterKids.HEIGHT, scale: 2, formats: ["png", "pdf"] },
+  poster_sicha: { ...posterSicha, width: posterSicha.WIDTH, height: posterSicha.HEIGHT, scale: 2, formats: ["png", "pdf"] },
   whatsapp_shabbos: { ...whatsappShabbos, width: whatsappShabbos.WIDTH, height: whatsappShabbos.HEIGHT, scale: 2, formats: ["png"] },
   whatsapp_weekly: { ...whatsappWeekly, width: whatsappWeekly.WIDTH, height: whatsappWeekly.HEIGHT, scale: 2, formats: ["png"] },
 };

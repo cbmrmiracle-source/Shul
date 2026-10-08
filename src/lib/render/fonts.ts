@@ -16,6 +16,8 @@ const FONTS: { pkg: string; weights: number[] }[] = [
   { pkg: "heebo", weights: [400, 500, 700, 800] },
   { pkg: "libre-baskerville", weights: [400, 700] },
   { pkg: "playfair-display", weights: [700, 800] },
+  // Close to Bahnschrift (Farbrengen poster).
+  { pkg: "barlow-semi-condensed", weights: [400, 600, 700] },
 ];
 const SUBSETS = /-(latin|latin-ext|hebrew)-\d{3}-normal\.woff2/;
 

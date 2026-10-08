@@ -18,6 +18,7 @@
     "demo": "tsx --conditions=react-server scripts/demo-week.ts"
   },
   "dependencies": {
+    "@fontsource/barlow-semi-condensed": "^5.3.0",
     "@fontsource/frank-ruhl-libre": "^5.3.0",
     "@fontsource/heebo": "^5.3.0",
     "@fontsource/libre-baskerville": "^5.3.0",

@@ -54,14 +54,14 @@ async function main() {
   ]) {
     await add("mazal_tov", { title, fields: occasion ? { occasion } : {} });
   }
-  for (const [title, ages, time, location] of [
-    ["0-5 Year old program", "", "10:30-12:30PM", "EC3 Classroom"],
-    ["Girls 5+", "", "10:30-12:30PM", "Blue Bus"],
-    ["Girls Grades 5-8", "", "10:00AM", "Women's sections"],
-    ["Father & Son Minyan", "", "10:00 AM", "EC4 Classroom"],
-    ["Mesibos Shabbos", "", "5:30PM", "Blvd Woods Park in Estates of Inverrary"],
+  for (const [title, time, location, status] of [
+    ["0-5 Year old program", "10:30-12:30PM", "EC3 Classroom", "running"],
+    ["Girls 5+", "10:30-12:30PM", "Blue Bus", "running"],
+    ["Girls Grades 5-8", "10:00AM", "Women's Section", "back"],
+    ["Father & Son Minyan", "10:00AM", "Cheder Classroom", "back"],
+    ["Mesibos Shabbos", "5:30PM", "Blvd Woods Park in Estates of Inverrary", "running"],
   ]) {
-    await add("kids_program", { title, eventTime: time, fields: { location, status: "running", ...(ages ? { ages } : {}) } });
+    await add("kids_program", { title, eventTime: time, fields: { location, status } });
   }
   await add("parsha_nutshell", {
     body: `The name of the Parshah, "Ki Tavo," means "When you come," and it is found in Devarim 26:1.

@@ -1,6 +1,6 @@
 # Shul Communications Platform — Architecture Proposal
 
-**Status:** APPROVED (Oct 8, 2026). Phases 0–5 and the paste-in part of 7 are built. See "Decisions" below.
+**Status:** APPROVED (Oct 8, 2026). Phases 0–6 and the paste-in part of 7 are built. See "Decisions" below.
 **Reference week:** Parshas Ki Savo 5786 (Shabbos 16 Elul / Aug 29, 2026)
 
 

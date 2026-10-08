@@ -161,13 +161,15 @@ export default async function OutputsPage({ params }: { params: Promise<{ date: 
           })}
       </div>
 
-      <section className="card p-5 text-sm text-stone-600">
-        <h2 className="mb-1 font-semibold text-navy">Coming in later phases</h2>
-        {outputs
-          .filter((o) => !o.template && o.pub.key !== "email")
-          .map((o) => o.pub.name)
-          .join(" · ")}
-      </section>
+      {outputs.some((o) => !o.template && o.pub.key !== "email") && (
+        <section className="card p-5 text-sm text-stone-600">
+          <h2 className="mb-1 font-semibold text-navy">Not available yet</h2>
+          {outputs
+            .filter((o) => !o.template && o.pub.key !== "email")
+            .map((o) => o.pub.name)
+            .join(" · ")}
+        </section>
+      )}
     </div>
   );
 }
