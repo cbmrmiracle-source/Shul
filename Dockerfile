@@ -10,5 +10,6 @@ COPY . .
 RUN npm run build
 ENV NODE_ENV=production PORT=3000 UPLOAD_DIR=/data/uploads
 EXPOSE 3000
-# Apply pending migrations, then start. Mount a volume at /data for uploads.
-CMD ["sh", "-c", "npm run db:migrate && npm start"]
+# Apply pending migrations, create the starting settings on first run (safe to repeat), then start.
+# Mount a persistent volume at /data for uploaded images.
+CMD ["sh", "-c", "npm run db:migrate && npm run db:seed && npm start"]

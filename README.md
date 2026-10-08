@@ -4,7 +4,8 @@ Weekly content management and publishing for Chabad of Inverrary: enter informat
 choose where it appears, and generate the email, print newsletter, posters and WhatsApp images
 from the same source.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and roadmap.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and roadmap, and
+**[docs/DEPLOY.md](docs/DEPLOY.md) to put the app online.**
 
 ## Status
 
