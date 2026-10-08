@@ -1,6 +1,6 @@
 # Shul Communications Platform — Architecture Proposal
 
-**Status:** APPROVED (Oct 8, 2026). Phases 0, 1, 2 and the paste-in part of 7 are built. See "Decisions" below.
+**Status:** APPROVED (Oct 8, 2026). Phases 0–3 and the paste-in part of 7 are built. See "Decisions" below.
 **Reference week:** Parshas Ki Savo 5786 (Shabbos 16 Elul / Aug 29, 2026)
 
 
@@ -17,6 +17,7 @@
 | Birthdays sheet | `https://docs.google.com/spreadsheets/d/1DP49PNV6viOC4VtQmwNUxeJhb0VufBddSbWsX4L2ms8` |
 
 | Yahrzeit/birthday input | **Paste-in instead of a live Google Sheets connection** (director's choice). Copy the sheet, paste it on the Yahrzeits & Birthdays page, confirm the column matching once (it's remembered) |
+| Templates | Plain TypeScript functions using a small auto-escaping `html` helper (Next.js blocks `react-dom/server` in route handlers). Rendered to PNG/PDF by headless Chromium with bundled fonts |
 | Content types | Defined in code (`src/lib/content/types.ts`) rather than a database table, so each type's form and template stay in sync. New ad-hoc blocks use the **Custom Block** type, which needs no developer |
 
 > The two sheet URLs above are given in the order provided. Phase 7 will confirm which is which,

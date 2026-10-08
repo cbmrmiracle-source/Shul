@@ -14,7 +14,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and roadmap.
 | 1 — Calendar & davening | ✅ | Parsha, Hebrew dates, holidays, zmanim; davening profiles with rules; per-week overrides |
 | 2 — Content core | ✅ | Content items for every type, per-publication placement & wording, recurring items, images, review status, placement grid |
 | 7 — Yahrzeits & birthdays | ✅ (paste-in) | Paste the spreadsheet; each week lists matches for review |
-| 3 — Render engine | ⏳ next | Davening poster + WhatsApp images |
+| 3 — Render engine | ✅ | Davening poster (PNG + PDF), Shabbos & Weekly WhatsApp images (1080×1080) |
+| 4 — Email | ⏳ next | |
 
 ## Running locally
 
@@ -57,6 +58,21 @@ TEST_DATABASE_URL=postgres://…/shul_test npm test   # + database tests (the da
   Shabbos–Friday as **needs review**. Approved or edited items are never removed by a later paste.
 - Images are stored under `UPLOAD_DIR` (default `./uploads`) and only served to the signed-in user.
 
+## Outputs
+
+Open a week and click **View outputs**. Each output is rendered by headless Chromium from an HTML template in
+`src/lib/render/templates/`. Fonts are bundled (`@fontsource`) and embedded, so results are identical on any server.
+Text that doesn't fit is shrunk (down to 62%) and flagged; unreviewed items are left out and flagged.
+
+```bash
+npm run render -- 2026-08-29 ./out   # write every output for a week to files
+```
+
+Locally, Chromium comes from Playwright (`npx playwright-core install chromium`), or set `CHROMIUM_PATH`.
+The Docker image is based on Playwright's, which includes it.
+
+Upload the shul's logo in **Settings**; until then a placeholder cut from a sample image is used.
+
 ## Project layout
 
 ```
@@ -65,6 +81,7 @@ src/lib/schedule/   davening rule engine
 src/lib/weeks.ts    week service: create, sync (never overwrites overrides)
 src/lib/content/    content types registry and content service
 src/lib/people/     spreadsheet paste parsing and yahrzeit/birthday lists
+src/lib/render/     render data, HTML helper, fonts, Chromium renderer, templates/
 src/db/             Drizzle schema and client; migrations live in drizzle/
 src/app/            pages and server actions
 ```

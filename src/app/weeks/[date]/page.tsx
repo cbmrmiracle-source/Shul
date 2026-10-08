@@ -48,9 +48,14 @@ export default async function WeekPage({ params }: { params: Promise<{ date: str
 
   return (
     <div className="space-y-6">
-      <Link href="/" className="text-sm text-navy hover:underline">
-        ← All weeks
-      </Link>
+      <div className="flex items-center justify-between">
+        <Link href="/" className="text-sm text-navy hover:underline">
+          ← All weeks
+        </Link>
+        <Link href={`/weeks/${date}/outputs`} className="btn-primary">
+          View outputs →
+        </Link>
+      </div>
 
       {/* Header ------------------------------------------------------------ */}
       <section className="card overflow-hidden">

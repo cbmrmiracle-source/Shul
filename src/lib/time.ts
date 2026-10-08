@@ -105,3 +105,18 @@ export function parseTimeValue(input: string): TimeValue | null {
     times: parsed.map(({ h, m, period }) => (h % 12) * 60 + m + (period === "pm" ? 720 : 0)),
   };
 }
+
+/**
+ * Spoken-style list for signage: [420, 495, 540] → "7:00, 8:15 & 9:00 am";
+ * mixed periods keep their own suffix: "11:30 am & 1:30 pm".
+ */
+export function formatTimesLong(times: number[]): string {
+  const parts = times.map((t) => {
+    const h24 = Math.floor(t / 60) % 24;
+    return { text: `${h24 % 12 === 0 ? 12 : h24 % 12}:${String(t % 60).padStart(2, "0")}`, pm: h24 >= 12 };
+  });
+  const same = parts.every((p) => p.pm === parts[0].pm);
+  const words = parts.map((p) => (same ? p.text : `${p.text} ${p.pm ? "pm" : "am"}`));
+  const list = words.length > 1 ? `${words.slice(0, -1).join(", ")} & ${words[words.length - 1]}` : words[0] ?? "";
+  return same && parts.length ? `${list} ${parts[0].pm ? "pm" : "am"}` : list;
+}

@@ -44,6 +44,28 @@ export function SettingsForm({ org }: { org: Organization }) {
           <Field label="Email" name="email" type="email" defaultValue={org.email} />
           <Field label="Website" name="website" defaultValue={org.website} />
         </div>
+        <div className="mt-4 flex flex-wrap items-center gap-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={org.logoAssetId ? `/files/${org.logoAssetId}` : "/brand/logo-placeholder.png"}
+            alt="Current logo"
+            className="h-20 rounded border border-stone-200 bg-stone-50 p-1"
+          />
+          <label className="block text-sm">
+            <span className="font-medium">Logo</span>
+            <input name="logo" type="file" accept="image/png,image/jpeg,image/webp" className="mt-1 block text-sm" />
+            <span className="mt-0.5 block text-xs text-stone-500">
+              {org.logoAssetId
+                ? "Your uploaded logo is used on every output."
+                : "Using a temporary logo cut from a sample image. Upload the original (a PNG with a transparent background is best)."}
+            </span>
+          </label>
+          {org.logoAssetId && (
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" name="removeLogo" /> Use the temporary logo instead
+            </label>
+          )}
+        </div>
       </section>
 
       <section className="card p-5">

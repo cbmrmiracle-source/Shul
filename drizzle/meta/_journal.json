@@ -15,6 +15,13 @@
       "when": 1791481067364,
       "tag": "0001_content",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791482408740,
+      "tag": "0002_org_logo",
+      "breakpoints": true
     }
   ]
 }

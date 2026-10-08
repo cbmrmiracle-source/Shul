@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   date,
   index,
@@ -35,6 +36,8 @@ export const organization = pgTable("organization", {
   phone: text("phone").notNull().default(""),
   email: text("email").notNull().default(""),
   website: text("website").notNull().default(""),
+  /** Uploaded logo; templates fall back to the bundled placeholder when unset. */
+  logoAssetId: integer("logo_asset_id").references((): AnyPgColumn => asset.id, { onDelete: "set null" }),
   zmanim: jsonb("zmanim").$type<ZmanimSettings>().notNull(),
   /** Spelling fixes on top of Hebcal's Ashkenazi names, e.g. Bereshis → Bereishis. */
   houseSpellings: jsonb("house_spellings").$type<Record<string, string>>().notNull().default({}),

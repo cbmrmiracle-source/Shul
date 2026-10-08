@@ -6,6 +6,7 @@ import { z } from "zod";
 import { db, schema } from "@/db";
 import { requireAuth } from "@/lib/auth/server";
 import type { ZmanimSettings } from "@/lib/calendar/zmanim";
+import { saveImage } from "@/lib/storage/images";
 import { getOrganization, resyncOpenWeeks } from "@/lib/weeks";
 
 const roundMode = z.enum(["nearest", "floor", "ceil"]);
@@ -53,6 +54,16 @@ export async function saveSettings(_prev: string | null, form: FormData): Promis
   }
   const s = parsed.data;
   const org = await getOrganization();
+  let logoAssetId = org.logoAssetId;
+  if (form.get("removeLogo") === "on") logoAssetId = null;
+  const logo = form.get("logo");
+  if (logo instanceof File && logo.size > 0) {
+    try {
+      logoAssetId = (await saveImage(logo)).id;
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  }
   const zmanim: ZmanimSettings = {
     ...org.zmanim,
     latitude: s.latitude,
@@ -74,6 +85,7 @@ export async function saveSettings(_prev: string | null, form: FormData): Promis
       website: s.website,
       zmanim,
       houseSpellings: parseSpellings(s.houseSpellings),
+      logoAssetId,
     })
     .where(eq(schema.organization.id, org.id));
   const n = await resyncOpenWeeks();
