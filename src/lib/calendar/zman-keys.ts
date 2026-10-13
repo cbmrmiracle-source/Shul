@@ -24,7 +24,7 @@ export const ZMAN_LABELS: Record<ZmanKey, string> = {
   alos: "Alos HaShachar",
   sunrise: "Sunrise (Netz)",
   sofZmanShma: "Latest Shema",
-  sofZmanTefillah: "Latest Shacharis",
+  sofZmanTefillah: "Latest Shachris",
   chatzos: "Chatzos",
   minchaGedola: "Mincha Gedolah",
   minchaKetana: "Mincha Ketanah",

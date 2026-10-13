@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import type { RenderData } from "../data";
 import { html, raw, type HtmlValue, type SafeHtml } from "../html";
+import { dayRangeLabel } from "@/lib/schedule/days";
 
 /** Brand colors from the newsletter, email and posters. */
 export const COLORS = {
@@ -85,4 +87,16 @@ function twemojiSvg(e: string): string | null {
   }
   emojiCache.set(e, data);
   return data;
+}
+
+/**
+ * Heading for a Sunday–Thursday section: a single day gets its dates
+ * ("Tuesday, Elul 19 — Sep 1"), a range just the day names ("Monday — Thursday").
+ */
+export function sectionHeading(d: Pick<RenderData, "days">, days: number[]): string {
+  if (days.length === 1) {
+    const day = d.days[days[0] + 2]; // d.days runs Friday → Thursday
+    if (day) return `${day.weekday}, ${day.hebrew.month} ${day.hebrew.day} — ${day.gregorianShort}`;
+  }
+  return dayRangeLabel(days, " — ");
 }

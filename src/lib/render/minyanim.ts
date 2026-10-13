@@ -1,4 +1,5 @@
 import type { ScheduleRow } from "./data";
+import { dayRangeLabel, type DaySection } from "@/lib/schedule/days";
 import { formatTimesLong, type TimeValue } from "@/lib/time";
 
 /**
@@ -6,8 +7,9 @@ import { formatTimesLong, type TimeValue } from "@/lib/time";
  *   SHACHRIS: Sunday - 7:00, 8:15 & 9:00 am / Monday-Friday - 6:30 & 7:30 am
  *   MINCHA: 7:30 pm
  *   MAARIV: Sunday - 8:06 pm / Monday-Thursday - B'zman
- * Rows are matched across days by label. Friday is folded in for morning
- * rows (Shacharis) when its time matches Monday–Thursday.
+ * Built from the week's day sections, so a Tuesday with a different Mincha
+ * shows as "Sunday-Monday - 7:30 pm / Tuesday - 7:00 pm / Wednesday-Thursday - 7:30 pm".
+ * Friday is folded in for morning rows (Shachris) when its time matches Thursday's.
  */
 export interface MinyanSummary {
   label: string;
@@ -17,34 +19,42 @@ export interface MinyanSummary {
 const normalize = (label: string) =>
   label
     .toLowerCase()
-    .replace(/shachris|shacharit/g, "shacharis")
+    .replace(/shacharis|shacharit/g, "shachris")
     .replace(/[^a-z]/g, "");
 
 const valueText = (v: TimeValue | null) => (!v ? "" : "text" in v ? v.text : formatTimesLong(v.times));
 const isMorning = (v: TimeValue | null) => Boolean(v && "times" in v && v.times[0] < 12 * 60);
 
-export function summarizeMinyanim(sunday: ScheduleRow[], weekday: ScheduleRow[], friday: ScheduleRow[]): MinyanSummary[] {
+export function summarizeMinyanim(sections: DaySection<ScheduleRow>[], friday: ScheduleRow[]): MinyanSummary[] {
   const labels: { key: string; label: string }[] = [];
-  for (const r of [...sunday, ...weekday]) {
-    const key = normalize(r.label);
-    if (!labels.some((l) => l.key === key)) labels.push({ key, label: r.label });
+  for (const sec of sections) {
+    for (const r of sec.rows) {
+      const key = normalize(r.label);
+      if (!labels.some((l) => l.key === key)) labels.push({ key, label: r.label });
+    }
   }
 
   return labels.map(({ key, label }) => {
-    const sun = sunday.find((r) => normalize(r.label) === key);
-    const wk = weekday.find((r) => normalize(r.label) === key);
-    const fri = friday.find((r) => normalize(r.label) === key && isMorning(r.value));
-    const wkText = valueText(wk?.value ?? null);
-    const friMatches = Boolean(fri && wk && valueText(fri.value) === wkText);
-    const weekdayDays = friMatches ? "Monday-Friday" : "Monday-Thursday";
-
-    const sunText = valueText(sun?.value ?? null);
-    if (sun && wk && sunText === wkText) {
-      return { label, lines: [{ days: friMatches || !fri ? null : "Sunday-Thursday", text: wkText }] };
+    // Days and text for this label, merging neighbouring days with the same time.
+    const segments: { days: number[]; text: string }[] = [];
+    for (const sec of sections) {
+      const row = sec.rows.find((r) => normalize(r.label) === key);
+      if (!row) continue;
+      const text = valueText(row.value);
+      const prev = segments[segments.length - 1];
+      if (prev && prev.text === text && prev.days[prev.days.length - 1] === sec.days[0] - 1) prev.days.push(...sec.days);
+      else segments.push({ days: [...sec.days], text });
     }
-    const lines: MinyanSummary["lines"] = [];
-    if (sun) lines.push({ days: "Sunday", text: sunText });
-    if (wk) lines.push({ days: weekdayDays, text: wkText });
-    return { label, lines };
+    const fri = friday.find((r) => normalize(r.label) === key && isMorning(r.value));
+    const last = segments[segments.length - 1];
+    const friFolded = Boolean(fri && last && last.days[last.days.length - 1] === 4 && valueText(fri.value) === last.text);
+    if (friFolded) last.days.push(5);
+
+    const allDays = segments.flatMap((s) => s.days);
+    const coversWeek = [0, 1, 2, 3, 4].every((d) => allDays.includes(d));
+    if (segments.length === 1 && coversWeek && (friFolded || !fri)) {
+      return { label, lines: [{ days: null, text: segments[0].text }] };
+    }
+    return { label, lines: segments.map((s) => ({ days: dayRangeLabel(s.days, "-"), text: s.text })) };
   });
 }

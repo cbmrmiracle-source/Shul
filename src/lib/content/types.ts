@@ -96,11 +96,21 @@ const types = {
       image: { label: "Sponsor image (optional)" },
     },
     extra: [
+      {
+        name: "level",
+        label: "Type",
+        input: "select",
+        options: [
+          { value: "sponsor", label: "Sponsor" },
+          { value: "co_sponsor", label: "Co-sponsor" },
+        ],
+        help: "Sponsors are listed first, then co-sponsors.",
+      },
       { name: "dedicationHe", label: "Hebrew / Yiddish text", input: "hebrew", placeholder: "יוסף חיים בן חנוך העניך הכהן" },
     ],
     defaultPlacements: ["email", "newsletter", "poster_farbrengen"],
     recurring: false,
-    summary: (i) => firstLine(i.body),
+    summary: (i) => join(i.fields.level === "co_sponsor" ? "Co-sponsor" : i.fields.level === "sponsor" ? "Sponsor" : null, firstLine(i.body)),
   },
   event: {
     key: "event",
@@ -301,6 +311,27 @@ const types = {
     defaultPlacements: ["email", "newsletter"],
     recurring: false,
     summary: (i) => join(i.fields.nameHe, i.hebrewDate, i.fields.relation),
+  },
+  condolence: {
+    key: "condolence",
+    titleRequired: true,
+    label: "Condolences",
+    section: "Condolences",
+    icon: "🕊️",
+    common: {
+      title: { label: "Mourner(s) / family", placeholder: "the Goldberg family" },
+      body: {
+        label: "Message (optional)",
+        help: "Leave blank to print “We extend our heartfelt condolences to [family] [on the passing of …].”",
+      },
+    },
+    extra: [
+      { name: "passing", label: "On the passing of", input: "text", placeholder: "on the passing of their father, Reb Yosef Chaim ben Chanoch Henech" },
+      { name: "shiva", label: "Shiva information", input: "textarea", placeholder: "Shiva at 1234 NW 44th St until Thursday morning. Minyanim 7:30AM & 7:15PM." },
+    ],
+    defaultPlacements: ["email"],
+    recurring: false,
+    summary: (i) => i.fields.passing ?? firstLine(i.body),
   },
   custom: {
     key: "custom",

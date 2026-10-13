@@ -49,6 +49,9 @@ TEST_DATABASE_URL=postgres://…/shul_test npm test   # + database tests (the da
 - Opening a week evaluates the rules against that week's zmanim. These are **AUTO** values.
 - Typing a time on the week screen stores an **OVERRIDE** next to the auto value. Recalculating never
   touches overrides, and rows that depend on an overridden row follow it.
+- On the week screen, ▲▼ reorder rows (the week then keeps that order), and Su–Th buttons set which days a
+  Sunday–Thursday row applies to. Outputs split the weekdays into sections automatically
+  (e.g. "Sunday", "Monday", "Tuesday", "Wednesday – Thursday").
 - Zmanim are computed locally (Hebcal) using Chabad's opinions: Alter Rebbe zmanim, candle lighting
   18 minutes before shkiah, Shabbos ends at 8.5°. All are adjustable in Settings.
 

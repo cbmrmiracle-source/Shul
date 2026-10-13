@@ -1,6 +1,6 @@
 import type { RenderData, ScheduleRow } from "../data";
 import { html, type SafeHtml } from "../html";
-import { BH, calendarIcon, COLORS } from "./shared";
+import { BH, calendarIcon, COLORS, sectionHeading } from "./shared";
 
 /** The Weekly Schedule poster (Weeklys p.4), Letter size. Same layout as the newsletter's schedule card. */
 export const WIDTH = 816; // 8.5in at 96dpi
@@ -39,7 +39,7 @@ function group(heading: string, rows: ScheduleRow[]): SafeHtml {
 }
 
 export function render(d: RenderData): SafeHtml {
-  const [fri, sat, sun] = d.days;
+  const [fri, sat] = d.days;
   const dayHeading = (day: typeof fri) => `${day.weekday}, ${day.hebrew.month} ${day.hebrew.day} — ${day.gregorianShort}`;
   return html`
     <header class="hdr">
@@ -53,7 +53,6 @@ export function render(d: RenderData): SafeHtml {
     <main class="box" data-fit="Schedule"><div>
       ${group(dayHeading(fri), d.schedule.friday)}
       ${group(dayHeading(sat), d.schedule.shabbos)}
-      ${group(dayHeading(sun), d.schedule.sunday)}
-      ${group("Monday — Thursday", d.schedule.weekday)}
+      ${d.weekdaySections.map((sec) => group(sectionHeading(d, sec.days), sec.rows))}
     </div></main>`;
 }

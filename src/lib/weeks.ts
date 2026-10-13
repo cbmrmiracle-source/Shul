@@ -65,7 +65,10 @@ export function effectiveCalendar(auto: WeekCalendar, overrides: CalendarOverrid
 
 function groupZmanim(cal: WeekCalendar): GroupZmanim {
   const [fri, sat, sun, ...rest] = cal.days.map((d) => d.zmanim);
-  return { friday: [fri], shabbos: [sat], sunday: [sun], weekday: rest.slice(0, 4) };
+  // cal.days runs Friday → Thursday
+  const byWeekday: Record<number, DayZmanim> = { 5: fri, 6: sat, 0: sun };
+  rest.slice(0, 4).forEach((z, i) => (byWeekday[i + 1] = z));
+  return { friday: [fri], shabbos: [sat], sunday: [sun], weekday: rest.slice(0, 4), byWeekday };
 }
 
 export async function getWeekByDate(shabbosDate: string): Promise<Week | null> {
@@ -136,17 +139,25 @@ export async function syncWeek(weekId: number): Promise<void> {
 
     const effective = effectiveCalendar(calendarAuto, w.calendarOverrides);
     const results = evaluateSlots(
-      slots.map((s) => ({ key: s.key, group: s.group, rule: ruleSchema.parse(s.rule) })),
+      slots.map((s) => ({
+        key: s.key,
+        group: s.group,
+        rule: ruleSchema.parse(s.rule),
+        days: entries.find((e) => e.key === s.key)?.days ?? null,
+      })),
       groupZmanim(effective),
       overrides,
     );
     const byKey = new Map(entries.map((e) => [e.key, e]));
     const slotKeys = new Set(slots.map((s) => s.key));
 
+    // Once the week's rows were reordered by hand, keep that order; new rows go at the end.
+    let nextOrder = Math.max(0, ...entries.map((e) => e.sortOrder)) + 10;
     for (const [i, slot] of slots.entries()) {
       const result = results.get(slot.key)!;
       const autoValue: TimeValue | null = "error" in result ? null : result;
       const autoError = "error" in result ? result.error : null;
+      const existing = byKey.get(slot.key);
       const fields = {
         group: slot.group,
         label: slot.label,
@@ -154,9 +165,8 @@ export async function syncWeek(weekId: number): Promise<void> {
         source: "rule" as const,
         autoValue,
         autoError,
-        sortOrder: i * 10,
+        ...(w.customOrder && existing ? {} : { sortOrder: w.customOrder ? (nextOrder += 10) : i * 10 }),
       };
-      const existing = byKey.get(slot.key);
       if (existing) {
         await tx.update(schema.scheduleEntry).set(fields).where(eq(schema.scheduleEntry.id, existing.id));
       } else {

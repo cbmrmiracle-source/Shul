@@ -44,3 +44,19 @@ export async function saveImage(file: File): Promise<Asset> {
     .returning();
   return row;
 }
+
+/** Save an uploaded PDF, or an image (e.g. the seasonal davening calendar). */
+export async function saveDocument(file: File): Promise<Asset> {
+  if (file.size > MAX_IMAGE_BYTES) throw new Error("File is larger than 10 MB.");
+  const data = Buffer.from(await file.arrayBuffer());
+  if (sniffImage(data)) return saveImage(file);
+  if (data.subarray(0, 5).toString("ascii") !== "%PDF-") throw new Error("Please upload a PDF or an image.");
+  const now = new Date();
+  const storageKey = `files/${now.getUTCFullYear()}/${String(now.getUTCMonth() + 1).padStart(2, "0")}/${randomUUID()}.pdf`;
+  await storage.put(storageKey, data);
+  const [row] = await db
+    .insert(schema.asset)
+    .values({ storageKey, originalName: file.name.slice(0, 200), mime: "application/pdf", size: data.length })
+    .returning();
+  return row;
+}

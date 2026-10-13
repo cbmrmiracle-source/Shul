@@ -1,7 +1,8 @@
 import type { DayInfo } from "@/lib/calendar/week";
 import type { RenderData, RenderItem, ScheduleRow } from "../data";
 import { bidi, formatInline, formatText, html, type HtmlValue, type SafeHtml } from "../html";
-import { BH, COLORS, emoji } from "./shared";
+import { BH, COLORS, emoji, sectionHeading } from "./shared";
+import { sponsorGroups } from "../sponsors";
 
 /**
  * "The Shabbos Connection": one Letter sheet, printed double-sided.
@@ -89,7 +90,7 @@ function shortDate(civil: string | null): string {
 
 export function render(d: RenderData): SafeHtml {
   const items = d.items.newsletter ?? [];
-  const [fri, sat, sun] = d.days;
+  const [fri, sat] = d.days;
 
   // ---- Page 1 ---------------------------------------------------------------
   const schedule = card(
@@ -98,8 +99,7 @@ export function render(d: RenderData): SafeHtml {
     html`<div class="sched">
       ${scheduleGroup(dayHeading(fri), d.schedule.friday)}
       ${scheduleGroup(dayHeading(sat), d.schedule.shabbos)}
-      ${scheduleGroup(dayHeading(sun), d.schedule.sunday)}
-      ${scheduleGroup("Monday — Thursday", d.schedule.weekday)}
+      ${d.weekdaySections.map((sec) => scheduleGroup(sectionHeading(d, sec.days), sec.rows))}
     </div>`,
   );
 
@@ -125,10 +125,12 @@ export function render(d: RenderData): SafeHtml {
     ? card(
         "🍷",
         "Farbrengen",
-        html`<p class="b" style="text-decoration:underline">${sponsors.length > 1 ? "Co-Sponsored by:" : "Sponsored by:"}</p>
-        ${sponsors.map(
+        html`${sponsorGroups(sponsors).map(
+          (g) => html`<p class="b" style="text-decoration:underline">${g.heading}:</p>
+        ${g.items.map(
           (s) => html`<div class="item"><div class="b">${s.title}</div>
             <div>${s.body ? formatInline(s.body) : ""}${s.fields.dedicationHe ? html` <bdi class="he" dir="rtl" lang="he">${s.fields.dedicationHe}</bdi>` : ""}</div></div>`,
+        )}`,
         )}`,
       )
     : "";
@@ -175,6 +177,19 @@ export function render(d: RenderData): SafeHtml {
         html`${yahrzeits.map(
           (y) => html`<div>${y.title || bidi(y.fields.nameHe ?? "")}${y.hebrewDate ? html` - ${bidi(y.hebrewDate)}` : ""}${y.fields.relation ? `, ${y.fields.relation}` : ""}</div>`,
         )}`,
+      )
+    : "";
+
+  const condolences = by(items, "condolence");
+  const condolenceCard = condolences.length
+    ? card(
+        "🕊️",
+        "Condolences",
+        html`${condolences.map(
+          (c) => html`<div class="item">${c.body ? text(c.body) : html`We extend our heartfelt condolences to <span class="b">${c.title}</span>${c.fields.passing ? ` ${c.fields.passing}` : ""}.`}${
+            c.fields.shiva ? html`<div class="muted">${formatInline(c.fields.shiva)}</div>` : ""
+          }</div>`,
+        )}<div class="center"><bdi class="he" dir="rtl" lang="he">המקום ינחם אתכם בתוך שאר אבלי ציון וירושלים</bdi></div>`,
       )
     : "";
 
@@ -253,7 +268,7 @@ export function render(d: RenderData): SafeHtml {
     <div class="cols">
       <div class="col c-left" data-fit="Page 1, left column (schedule, kids)"><div>${schedule}${kidsCard}</div></div>
       <div class="col c-right" data-fit="Page 1, right column (farbrengen, events, birthdays, mazal tov, yahrzeits)"><div>
-        ${sponsorCard}${eventsCard}${birthdayCard}${mazalCard}${yahrzeitCard}
+        ${sponsorCard}${eventsCard}${birthdayCard}${mazalCard}${yahrzeitCard}${condolenceCard}
       </div></div>
     </div>
   </div>

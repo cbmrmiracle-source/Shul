@@ -17,7 +17,7 @@ const round5 = z.enum(["none", "down5", "up5", "nearest5"]).default("none");
 
 /** Strict form used for stored rules: clock times are minutes after midnight. */
 export const ruleSchema = z.discriminatedUnion("kind", [
-  /** One or more fixed clock times, e.g. Shacharis 6:30 & 7:30AM. */
+  /** One or more fixed clock times, e.g. Shachris 6:30 & 7:30AM. */
   z.object({ kind: z.literal("fixed"), times: z.array(z.number().int().min(0).max(1439)).min(1) }),
   /** A zman for the slot's day, plus/minus minutes, e.g. Mincha = candle lighting + 8. */
   z.object({
@@ -42,10 +42,15 @@ export interface SlotDef {
   key: string;
   group: ScheduleGroup;
   rule: ScheduleRule;
+  /** Sunday–Thursday rows: the days this row applies to this week (0 = Sunday). */
+  days?: number[] | null;
 }
 
 /** Zmanim for each day of the week, keyed by group. Weekday uses every Mon–Thu day. */
-export type GroupZmanim = Record<ScheduleGroup, DayZmanim[]>;
+export type GroupZmanim = Record<ScheduleGroup, DayZmanim[]> & {
+  /** Zmanim by weekday (0 = Sunday … 6 = Shabbos), for rows set to particular days. */
+  byWeekday?: Partial<Record<number, DayZmanim>>;
+};
 
 export class RuleError extends Error {}
 
@@ -91,7 +96,10 @@ export function evaluateSlots(
         return { text: rule.text };
       case "zman": {
         // For a multi-day group take the earliest value, so a weekday Mincha is never after shkiah.
-        const values = zmanim[slot.group]
+        const days = slot.days?.length && zmanim.byWeekday
+          ? slot.days.map((d) => zmanim.byWeekday![d]).filter((z): z is DayZmanim => Boolean(z))
+          : zmanim[slot.group];
+        const values = days
           .map((day) => day[rule.zman])
           .filter((v): v is number => v !== null);
         if (values.length === 0) throw new RuleError(`No ${rule.zman} for ${slot.group}`);

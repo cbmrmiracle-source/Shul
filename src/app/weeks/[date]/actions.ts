@@ -1,12 +1,13 @@
 "use server";
 
-import { and, eq, max } from "drizzle-orm";
+import { and, asc, eq, max } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db, schema } from "@/db";
 import type { CalendarOverrides } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/server";
 import { ZMAN_KEYS } from "@/lib/calendar/zmanim";
+import { effectiveDays, normalizeDays, SELECTABLE_DAYS } from "@/lib/schedule/days";
 import { SCHEDULE_GROUPS } from "@/lib/schedule/rules";
 import { parseTimeValue } from "@/lib/time";
 import { syncWeek } from "@/lib/weeks";
@@ -76,6 +77,8 @@ export async function addManualEntry(form: FormData) {
     })
     .parse(Object.fromEntries(form));
   const w = await weekById(input.weekId);
+  const picked = form.getAll("day").map(Number).filter((d) => SELECTABLE_DAYS.includes(d));
+  const days = picked.length ? normalizeDays(input.group, picked) : null;
   const [{ last }] = await db
     .select({ last: max(schema.scheduleEntry.sortOrder) })
     .from(schema.scheduleEntry)
@@ -87,6 +90,7 @@ export async function addManualEntry(form: FormData) {
     label: input.label,
     source: "manual",
     overrideValue: parseTimeValue(input.value),
+    days,
     sortOrder: (last ?? 0) + 1,
   });
   revalidatePath(`/weeks/${w.shabbosDate}`);
@@ -142,4 +146,53 @@ export async function saveZmanOverride(form: FormData) {
     .where(eq(schema.week.id, w.id));
   await syncWeek(w.id);
   revalidatePath(`/weeks/${w.shabbosDate}`);
+}
+
+/** Switch one day on or off for a Sunday–Thursday row (at least one day stays on). */
+export async function toggleEntryDay(form: FormData) {
+  await requireAuth();
+  const entryId = id.parse(form.get("entryId"));
+  const day = z.coerce.number().int().min(0).max(4).parse(form.get("day"));
+  const [entry] = await db.select().from(schema.scheduleEntry).where(eq(schema.scheduleEntry.id, entryId));
+  if (!entry) throw new Error("Schedule row not found");
+  const current = effectiveDays(entry);
+  if (!current) throw new Error("Days can only be set on Sunday–Thursday rows");
+  const next = current.includes(day) ? current.filter((d) => d !== day) : [...current, day];
+  if (next.length === 0) return;
+  const { weekId, shabbosDate } = await weekOfEntry(entryId);
+  await db
+    .update(schema.scheduleEntry)
+    .set({ days: normalizeDays(entry.group, next) })
+    .where(eq(schema.scheduleEntry.id, entryId));
+  await syncWeek(weekId); // times based on zmanim follow the chosen days
+  revalidatePath(`/weeks/${shabbosDate}`);
+}
+
+/** Move a row up or down within its section; the week then keeps this order. */
+export async function moveEntry(form: FormData) {
+  await requireAuth();
+  const entryId = id.parse(form.get("entryId"));
+  const dir = form.get("dir") === "up" ? -1 : 1;
+  const { weekId, shabbosDate } = await weekOfEntry(entryId);
+  const rows = await db
+    .select()
+    .from(schema.scheduleEntry)
+    .where(eq(schema.scheduleEntry.weekId, weekId))
+    .orderBy(asc(schema.scheduleEntry.sortOrder), asc(schema.scheduleEntry.id));
+  const entry = rows.find((r) => r.id === entryId)!;
+  const siblings = rows.filter((r) => r.group === entry.group);
+  const i = siblings.findIndex((r) => r.id === entryId);
+  const j = i + dir;
+  if (j < 0 || j >= siblings.length) return;
+  // Swap within the group, then renumber the whole week to keep groups in order.
+  const swapped = [...siblings];
+  [swapped[i], swapped[j]] = [swapped[j], swapped[i]];
+  const ordered = rows.map((r) => (r.group === entry.group ? swapped.shift()! : r));
+  await db.transaction(async (tx) => {
+    for (const [n, r] of ordered.entries()) {
+      await tx.update(schema.scheduleEntry).set({ sortOrder: (n + 1) * 10 }).where(eq(schema.scheduleEntry.id, r.id));
+    }
+    await tx.update(schema.week).set({ customOrder: true }).where(eq(schema.week.id, weekId));
+  });
+  revalidatePath(`/weeks/${shabbosDate}`);
 }

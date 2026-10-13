@@ -26,7 +26,7 @@ h1 { margin: 8px 0 4px; font: 800 33px/1.05 'Playfair Display', serif; letter-sp
 const looksLikeTime = (s: string) => /^\d{1,2}:\d{2}/.test(s);
 
 export function render(d: RenderData): SafeHtml {
-  const summary = summarizeMinyanim(d.schedule.sunday, d.schedule.weekday, d.schedule.friday);
+  const summary = summarizeMinyanim(d.weekdaySections, d.schedule.friday);
   return html`
     <div class="frame"></div>
     ${BH}

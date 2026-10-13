@@ -87,4 +87,33 @@ describe.skipIf(!url)("week service (database)", () => {
     const b = await svc.createWeek("2026-08-29");
     expect(a.id).toBe(b.id);
   });
+
+  it("keeps a hand-set order through a re-sync", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { db, schema } = dbmod;
+    const week = (await svc.getWeekByDate("2026-08-29"))!;
+    const before = await svc.listEntries(week.id);
+    const sun = before.filter((e) => e.group === "sunday");
+    // Put Maariv before Shachris, as the move buttons would.
+    await db.update(schema.scheduleEntry).set({ sortOrder: 1 }).where(eq(schema.scheduleEntry.key, "sun_maariv"));
+    await db.update(schema.week).set({ customOrder: true }).where(eq(schema.week.id, week.id));
+    await svc.syncWeek(week.id);
+    const after = (await svc.listEntries(week.id)).filter((e) => e.group === "sunday").map((e) => e.key);
+    expect(after[0]).toBe("sun_maariv");
+    expect(after).toHaveLength(sun.length);
+  });
+
+  it("computes zman-based times for the days a row is set to", async () => {
+    const { eq } = await import("drizzle-orm");
+    const { db, schema } = dbmod;
+    const week = (await svc.getWeekByDate("2026-08-29"))!;
+    // Sunday Maariv = tzeis; move it to Thursday only: Thursday's tzeis is earlier in late summer.
+    const before = (await svc.listEntries(week.id)).find((e) => e.key === "sun_maariv")!;
+    await db.update(schema.scheduleEntry).set({ days: [4] }).where(eq(schema.scheduleEntry.id, before.id));
+    await svc.syncWeek(week.id);
+    const after = (await svc.listEntries(week.id)).find((e) => e.key === "sun_maariv")!;
+    const t = (v: unknown) => (v as { times: number[] }).times[0];
+    expect(t(after.autoValue)).toBeLessThan(t(before.autoValue));
+    expect(after.days).toEqual([4]);
+  });
 });

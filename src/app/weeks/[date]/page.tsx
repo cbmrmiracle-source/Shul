@@ -4,8 +4,9 @@ import { requireAuth } from "@/lib/auth/server";
 import { formatGregorianLong, isCivilDate } from "@/lib/calendar/dates";
 import { ZMAN_KEYS, ZMAN_LABELS, type ZmanKey } from "@/lib/calendar/zmanim";
 import { GROUP_LABELS, SCHEDULE_GROUPS } from "@/lib/schedule/rules";
-import { formatTime } from "@/lib/time";
-import { effectiveCalendar, getOrganization, getWeekByDate, listEntries } from "@/lib/weeks";
+import { formatTime, formatTimeValue } from "@/lib/time";
+import { buildDaySections, dayRangeLabel } from "@/lib/schedule/days";
+import { effectiveCalendar, effectiveValue, getOrganization, getWeekByDate, listEntries } from "@/lib/weeks";
 import { resyncWeek, saveTitleOverrides, saveZmanOverride } from "./actions";
 import { AddEntryForm, ScheduleRow } from "./schedule-row";
 import { ContentSection } from "./content-section";
@@ -201,7 +202,7 @@ export default async function WeekPage({ params }: { params: Promise<{ date: str
         <div className="card-header">
           <h2 className="font-semibold text-navy">Davening Times</h2>
           <span className="text-xs text-stone-500">
-            Type a new time to override. Blank = use the automatic value.
+            Type a new time to override (blank = automatic). ▲▼ reorder rows. Su–Th buttons choose the days a row applies to.
           </span>
         </div>
         {SCHEDULE_GROUPS.map((group) => {
@@ -213,14 +214,23 @@ export default async function WeekPage({ params }: { params: Promise<{ date: str
                 {group === "weekday" ? GROUP_LABELS.weekday : `${d.weekday}, ${d.hebrew.month} ${d.hebrew.day} — ${d.gregorianShort}`}
               </h3>
               <div className="divide-y divide-stone-50">
-                {rows.map((entry) => (
-                  <ScheduleRow key={entry.id} entry={entry} />
+                {rows.map((entry, i) => (
+                  <ScheduleRow key={entry.id} entry={entry} first={i === 0} last={i === rows.length - 1} />
                 ))}
               </div>
               <AddEntryForm weekId={week.id} group={group} />
             </div>
           );
         })}
+        <div className="border-t border-stone-100 bg-stone-50 px-4 py-2 text-sm text-stone-600">
+          <span className="font-medium">Weekdays will print as:</span>{" "}
+          {buildDaySections(
+            entries.filter((e) => !e.hidden),
+            (e) => `${e.label}=${formatTimeValue(effectiveValue(e))}`,
+          )
+            .map((sec) => dayRangeLabel(sec.days))
+            .join("  ·  ") || "—"}
+        </div>
       </section>
 
       <ContentSection items={items} pubs={pubs} date={date} />

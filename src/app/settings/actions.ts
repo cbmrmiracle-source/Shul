@@ -6,7 +6,7 @@ import { z } from "zod";
 import { db, schema } from "@/db";
 import { requireAuth } from "@/lib/auth/server";
 import type { ZmanimSettings } from "@/lib/calendar/zmanim";
-import { saveImage } from "@/lib/storage/images";
+import { saveDocument, saveImage } from "@/lib/storage/images";
 import { getOrganization, resyncOpenWeeks } from "@/lib/weeks";
 
 const roundMode = z.enum(["nearest", "floor", "ceil"]);
@@ -37,6 +37,13 @@ const settingsSchema = z.object({
   newsletterName: z.string().trim().max(200),
   sponsorNote: z.string().trim().max(1000),
   footerNote: z.string().trim().max(1000),
+  eruvMapUrl: z
+    .string()
+    .trim()
+    .max(2000)
+    .refine((u) => u === "" || /^https?:\/\//i.test(u), "The Eruv map link must start with https://"),
+  resourcesText: z.string().trim().max(1000),
+  scheduleLabel: z.string().trim().max(200),
 });
 
 /** "Bereshis = Bereishis" per line → { Bereshis: "Bereishis" } */
@@ -59,6 +66,16 @@ export async function saveSettings(_prev: string | null, form: FormData): Promis
   const org = await getOrganization();
   let logoAssetId = org.logoAssetId;
   if (form.get("removeLogo") === "on") logoAssetId = null;
+  let scheduleAssetId = org.emailSettings.scheduleAssetId ?? null;
+  if (form.get("removeSchedule") === "on") scheduleAssetId = null;
+  const scheduleFile = form.get("scheduleFile");
+  if (scheduleFile instanceof File && scheduleFile.size > 0) {
+    try {
+      scheduleAssetId = (await saveDocument(scheduleFile)).id;
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e);
+    }
+  }
   const logo = form.get("logo");
   if (logo instanceof File && logo.size > 0) {
     try {
@@ -89,7 +106,15 @@ export async function saveSettings(_prev: string | null, form: FormData): Promis
       zmanim,
       houseSpellings: parseSpellings(s.houseSpellings),
       logoAssetId,
-      emailSettings: { newsletterName: s.newsletterName, sponsorNote: s.sponsorNote, footerNote: s.footerNote },
+      emailSettings: {
+        newsletterName: s.newsletterName,
+        sponsorNote: s.sponsorNote,
+        footerNote: s.footerNote,
+        eruvMapUrl: s.eruvMapUrl,
+        resourcesText: s.resourcesText,
+        scheduleLabel: s.scheduleLabel,
+        scheduleAssetId,
+      },
     })
     .where(eq(schema.organization.id, org.id));
   const n = await resyncOpenWeeks();

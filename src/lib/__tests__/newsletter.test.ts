@@ -78,7 +78,7 @@ it("merges multi-day calendar events into one line", () => {
 
 it("takes a shiur's time from the matching davening row", () => {
   const { schedule } = fixture({});
-  schedule.shabbos.push({ key: "sicha", label: "Shiur in Likutei Sichos", note: "", display: "6:25PM", value: { times: [1105] } });
+  schedule.shabbos.push({ key: "sicha", group: "shabbos", label: "Shiur in Likutei Sichos", note: "", display: "6:25PM", value: { times: [1105] } });
   expect(scheduleTimeFor(schedule, "Shiur in Likutei Sichos")).toBe("6:25PM");
   expect(scheduleTimeFor(schedule, "Chassidus")).toBe("9:15AM");
   expect(scheduleTimeFor(schedule, "Gemara shiur before Mincha")).toBe("");

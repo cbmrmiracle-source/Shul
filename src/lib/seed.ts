@@ -14,19 +14,19 @@ export const SUMMER_SLOTS: {
   rule: ScheduleRule;
   note?: string;
 }[] = [
-  { key: "fri_shacharis", group: "friday", label: "Shacharis", rule: { kind: "fixed", times: [t(6, 30), t(7, 30)] } },
+  { key: "fri_shacharis", group: "friday", label: "Shachris", rule: { kind: "fixed", times: [t(6, 30), t(7, 30)] } },
   { key: "candle_lighting", group: "friday", label: "Candle Lighting", rule: { kind: "zman", zman: "candleLighting", offset: 0, round: "none" } },
   { key: "fri_mincha", group: "friday", label: "Mincha", rule: { kind: "relative", slotKey: "candle_lighting", offset: 8, round: "none" } },
   { key: "kabolas_shabbos", group: "friday", label: "Kabolas Shabbos", rule: { kind: "relative", slotKey: "candle_lighting", offset: 28, round: "none" } },
   { key: "chassidus", group: "shabbos", label: "Chassidus", rule: { kind: "fixed", times: [t(9, 15)] } },
-  { key: "shabbos_shacharis", group: "shabbos", label: "Shacharis", rule: { kind: "fixed", times: [t(10)] }, note: "Followed by Farbrengen" },
+  { key: "shabbos_shacharis", group: "shabbos", label: "Shachris", rule: { kind: "fixed", times: [t(10)] }, note: "Followed by Farbrengen" },
   { key: "sicha_shiur", group: "shabbos", label: "Shiur in Likutei Sichos", rule: { kind: "relative", slotKey: "shabbos_mincha", offset: -60, round: "none" } },
   { key: "shabbos_mincha", group: "shabbos", label: "Mincha", rule: { kind: "zman", zman: "sunset", offset: -18, round: "down5" } },
   { key: "shabbos_ends", group: "shabbos", label: "Maariv / Shabbos Ends", rule: { kind: "zman", zman: "shabbosEnds", offset: 0, round: "none" } },
-  { key: "sun_shacharis", group: "sunday", label: "Shacharis", rule: { kind: "fixed", times: [t(7), t(8, 15), t(9)] } },
+  { key: "sun_shacharis", group: "sunday", label: "Shachris", rule: { kind: "fixed", times: [t(7), t(8, 15), t(9)] } },
   { key: "sun_mincha", group: "sunday", label: "Mincha", rule: { kind: "fixed", times: [t(19, 30)] } },
   { key: "sun_maariv", group: "sunday", label: "Maariv", rule: { kind: "zman", zman: "tzeis", offset: 0, round: "none" } },
-  { key: "wk_shacharis", group: "weekday", label: "Shacharis", rule: { kind: "fixed", times: [t(6, 30), t(7, 30)] } },
+  { key: "wk_shacharis", group: "weekday", label: "Shachris", rule: { kind: "fixed", times: [t(6, 30), t(7, 30)] } },
   { key: "wk_mincha", group: "weekday", label: "Mincha", rule: { kind: "fixed", times: [t(19, 30)] } },
   { key: "wk_maariv", group: "weekday", label: "Maariv", rule: { kind: "text", text: "B'zman" } },
 ];

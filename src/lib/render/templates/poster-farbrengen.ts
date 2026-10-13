@@ -1,6 +1,7 @@
 import type { RenderData } from "../data";
 import { assetDataUrl } from "../assets";
 import { formatInline, html, type SafeHtml } from "../html";
+import { sponsorGroups } from "../sponsors";
 
 /** Farbrengen poster (Weeklys p.3): the sponsors over the "Farbrengen This Week" artwork. */
 export const WIDTH = 816;
@@ -14,6 +15,7 @@ export const css = () => `
 .label { font-weight: 600; text-decoration: underline; text-underline-offset: 4px; margin-bottom: 4px; }
 .sponsor { margin-bottom: 26px; }
 .sponsor:last-child { margin-bottom: 0; }
+.group + .group { margin-top: 26px; }
 .name { font-weight: 600; font-size: 34px; }
 .he { font-family: 'Frank Ruhl Libre', serif; font-weight: 700; }
 .note { margin-top: 40px; font-size: 24px; }
@@ -26,11 +28,13 @@ export function render(d: RenderData): SafeHtml {
     <div class="text" data-fit="Sponsors"><div>
       ${
         sponsors.length
-          ? html`<div class="label">${sponsors.length > 1 ? "Co-Sponsored by:" : "Sponsored by:"}</div>
-            ${sponsors.map(
+          ? html`${sponsorGroups(sponsors).map(
+              (g) => html`<div class="group"><div class="label">${g.heading}:</div>
+            ${g.items.map(
               (s) => html`<div class="sponsor"><div class="name">${s.title}</div>
                 ${s.body ? html`<div>${formatInline(s.body)}${s.fields.dedicationHe ? html` <bdi class="he" dir="rtl" lang="he">${s.fields.dedicationHe}</bdi>` : ""}</div>` : s.fields.dedicationHe ? html`<div><bdi class="he" dir="rtl" lang="he">${s.fields.dedicationHe}</bdi></div>` : ""}
               </div>`,
+            )}</div>`,
             )}`
           : html`<div class="note">${d.org.emailSettings.sponsorNote || "This week’s Farbrengen is available for sponsorship."}</div>`
       }

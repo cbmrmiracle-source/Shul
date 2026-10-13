@@ -9,12 +9,19 @@
  */
 import type { RenderData, RenderItem, ScheduleRow } from "./data";
 import { bidi, formatInline, formatText, html, raw, type HtmlValue, type SafeHtml } from "./html";
+import { dayRangeLabel } from "@/lib/schedule/days";
+import { sponsorGroups } from "./sponsors";
+import { DEFAULT_ERUV_MAP_URL, DEFAULT_ERUV_TEXT, DEFAULT_RESOURCES_TEXT, DEFAULT_SCHEDULE_LABEL } from "@/lib/email-defaults";
 
 export interface EmailOptions {
   /** Public URL for an uploaded file's storage key. */
   imageUrl: (storageKey: string) => string;
   /** Public URL of the placeholder logo, used when no logo has been uploaded. */
   placeholderLogoUrl: string;
+  /** Public link to this week's printable newsletter PDF (Community Resources). */
+  newsletterPdfUrl?: string;
+  /** Public link to the uploaded seasonal davening schedule (Community Resources). */
+  scheduleUrl?: string;
 }
 
 const C = {
@@ -116,32 +123,53 @@ ${shabbos.length ? html`<strong>Shabbos Day</strong><br>${scheduleLines(shabbos)
 
   // Weekday schedule
   const fridayMorning = d.schedule.friday.filter(isMorning);
-  if (d.schedule.sunday.length || d.schedule.weekday.length) {
+  if (d.weekdaySections.length) {
     sections.push(
       section(
         "📅 Weekday Schedule",
-        html`${d.schedule.sunday.length ? html`<strong>Sunday:</strong><br>${scheduleLines(d.schedule.sunday, ": ")}<br>` : ""}
-${d.schedule.weekday.length ? html`<strong>Monday - Thursday:</strong><br>${scheduleLines(d.schedule.weekday, ": ")}` : ""}
+        html`${d.weekdaySections.map(
+          (sec, i) =>
+            html`${i > 0 ? html`<br>` : ""}<strong>${dayRangeLabel(sec.days, " - ")}:</strong><br>${scheduleLines(sec.rows, ": ")}`,
+        )}
 ${fridayMorning.length ? html`<br><strong>Friday:</strong><br>${scheduleLines(fridayMorning, ": ")}` : ""}`,
       ),
     );
   }
 
-  // Eruv
-  for (const e of by(items, "eruv")) {
-    const status = e.fields.status;
+  // Eruv: in every email. The week's Eruv item (if any) gives the status;
+  // the map link comes from the item or from Settings.
+  const eruv = by(items, "eruv")[0];
+  const settings = d.org.emailSettings;
+  const mapUrl = eruv?.linkUrl || (settings.eruvMapUrl ?? DEFAULT_ERUV_MAP_URL);
+  if (eruv || mapUrl) {
+    const status = eruv?.fields.status;
     const headline =
       status === "kosher"
         ? html`<div style="font-size:18px;font-weight:bold;color:#2e7d32;margin-bottom:10px;">✅ The Eruv has been checked and is Kosher for this Shabbos.</div>`
         : status === "down"
           ? html`<div style="font-size:18px;font-weight:bold;color:#b3261e;margin-bottom:10px;">⚠️ The Eruv is NOT up this Shabbos.</div>`
-          : html`<div style="font-size:18px;font-weight:bold;margin-bottom:10px;">The Eruv status will be updated before Shabbos.</div>`;
+          : eruv
+            ? html`<div style="font-size:18px;font-weight:bold;margin-bottom:10px;">The Eruv status will be updated before Shabbos.</div>`
+            : "";
+    const message = eruv?.body || (mapUrl ? DEFAULT_ERUV_TEXT : "");
     sections.push(
       section(
         "🕍 Eruv Status",
         html`<div style="background:${C.cream};padding:18px;border-left:5px solid ${C.gold};border-radius:6px;">
-${headline}${e.body ? text(e.body) : ""}${e.linkUrl ? button(e.linkUrl, e.linkLabel || "🗺️ View Eruv Map & Status") : ""}
+${headline}${message ? text(message) : ""}${mapUrl ? button(mapUrl, eruv?.linkLabel || "🗺️ View Eruv Map & Status") : ""}
 </div>`,
+      ),
+    );
+  }
+
+  // Community Resources: this week's printable newsletter and the seasonal schedule.
+  if (opts.newsletterPdfUrl || opts.scheduleUrl) {
+    sections.push(
+      section(
+        "📚 Community Resources",
+        html`<p style="margin:0 0 6px 0;line-height:1.8;">${settings.resourcesText || DEFAULT_RESOURCES_TEXT}</p>
+${opts.newsletterPdfUrl ? html`${button(opts.newsletterPdfUrl, "📰 This Week's Newsletter (Printable Version)")}<br>` : ""}
+${opts.scheduleUrl ? button(opts.scheduleUrl, `📅 ${settings.scheduleLabel || DEFAULT_SCHEDULE_LABEL}`) : ""}`,
       ),
     );
   }
@@ -153,10 +181,12 @@ ${headline}${e.body ? text(e.body) : ""}${e.linkUrl ? button(e.linkUrl, e.linkLa
       section(
         "🍷 Farbrengen Sponsors",
         html`<div style="background:#ffffff;color:#111111;padding:22px;border-radius:10px;border:1px solid ${C.goldLight};">
-<strong style="color:${C.gold};font-size:14px;text-transform:uppercase;letter-spacing:1px;">${sponsors.length > 1 ? "Co-Sponsored By" : "Sponsored By"}</strong><br><br>
-${sponsors.map(
+${sponsorGroups(sponsors).map(
+  (g) => html`<strong style="color:${C.gold};font-size:14px;text-transform:uppercase;letter-spacing:1px;">${g.heading}</strong><br><br>
+${g.items.map(
   (s) => html`${image(img(s), s.title)}<strong>${s.title}</strong><br>
 ${s.body ? formatInline(s.body) : ""}${s.fields.dedicationHe ? html` <bdi dir="rtl" lang="he">${s.fields.dedicationHe}</bdi>` : ""}<br><br>`,
+)}`,
 )}
 ${d.org.emailSettings.sponsorNote ? html`<span style="color:${C.muted};">${d.org.emailSettings.sponsorNote}</span>` : ""}
 </div>`,
@@ -297,6 +327,22 @@ ${s.body ? text(s.body) : ""}`,
           const date = y.hebrewDate ? html` - ${bidi(y.hebrewDate)}` : "";
           return html`🕯 ${name}${date}${y.fields.relation ? `, ${y.fields.relation}` : ""}<br>`;
         })}`,
+      ),
+    );
+  }
+
+  // Condolences
+  const condolences = by(items, "condolence");
+  if (condolences.length) {
+    sections.push(
+      section(
+        "🕊️ Condolences",
+        html`${condolences.map(
+          (c, i) => html`${i > 0 ? html`<br>` : ""}${
+            c.body ? text(c.body) : html`<p style="margin:0 0 6px 0;">We extend our heartfelt condolences to <strong>${c.title}</strong>${c.fields.passing ? ` ${c.fields.passing}` : ""}.</p>`
+          }${c.fields.shiva ? html`<p style="margin:0 0 6px 0;color:${C.muted};">${formatInline(c.fields.shiva)}</p>` : ""}`,
+        )}
+<p style="margin:14px 0 0 0;font-style:italic;"><bdi dir="rtl" lang="he">המקום ינחם אתכם בתוך שאר אבלי ציון וירושלים</bdi><br>May Hashem comfort you among the mourners of Tzion and Yerushalayim.</p>`,
       ),
     );
   }

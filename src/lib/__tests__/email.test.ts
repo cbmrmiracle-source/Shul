@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { emailPreheader, emailSubject, renderEmail } from "@/lib/render/email";
-import { fixture, item } from "./fixtures";
+import { fixture, item, row, sectionsOf } from "./fixtures";
 
 const opts = {
   imageUrl: (k: string) => `https://shul.example.org/media/${k}`,
@@ -40,7 +40,7 @@ describe("email newsletter", () => {
     expect(out).toContain("Shabbos Ends: 8:18PM");
     expect(out).toContain("Kabolas Shabbos – 7:55PM");
     expect(out).toContain("Followed by Farbrengen");
-    expect(out).toContain("Shacharis: 7 / 8:15 / 9AM");
+    expect(out).toContain("Shachris: 7 / 8:15 / 9AM");
     expect(out).toContain("6700 NW 44th St");
   });
 
@@ -52,7 +52,7 @@ describe("email newsletter", () => {
 
   it("renders content sections like the current email", () => {
     expect(out).toContain("The Eruv has been checked and is Kosher");
-    expect(out).toContain("Co-Sponsored By");
+    expect(out).toContain("Co-Sponsored by");
     expect(out).toContain('<bdi dir="rtl" lang="he">יוסף חיים בן חנוך העניך הכהן</bdi>');
     expect(out).toContain("To sponsor a kiddush, call Sholom Katz.");
     expect(out).toContain("Monday, August 31 · 8:30PM");
@@ -85,5 +85,93 @@ describe("email newsletter", () => {
   it("builds a subject and preview line", () => {
     expect(emailSubject(data)).toBe("The Shabbos Connection – Parshas Ki Savo");
     expect(emailPreheader(data)).toBe("Candle Lighting 7:27PM · Shabbos Ends 8:18PM");
+  });
+});
+
+describe("email additions (October 2026)", () => {
+  const base = {
+    imageUrl: (k: string) => `https://shul.example.org/media/${k}`,
+    placeholderLogoUrl: "https://shul.example.org/brand/logo-placeholder.png",
+  };
+
+  it("lists sponsors before co-sponsors", () => {
+    const out = renderEmail(
+      fixture({
+        items: {
+          email: [
+            item("sponsor", { title: "Co One", fields: { level: "co_sponsor" } }),
+            item("sponsor", { title: "Main Sponsor", fields: { level: "sponsor" } }),
+            item("sponsor", { title: "Co Two", fields: { level: "co_sponsor" } }),
+          ],
+        },
+      }),
+      base,
+    );
+    const iSponsored = out.indexOf("Sponsored by<");
+    const iMain = out.indexOf("Main Sponsor");
+    const iCo = out.indexOf("Co-Sponsored by");
+    expect(iSponsored).toBeGreaterThan(0);
+    expect(iMain).toBeGreaterThan(iSponsored);
+    expect(iCo).toBeGreaterThan(iMain);
+    expect(out.indexOf("Co One")).toBeGreaterThan(iCo);
+    expect(out.indexOf("Co Two")).toBeGreaterThan(iCo);
+  });
+
+  it("always includes the Eruv map link", () => {
+    const out = renderEmail(fixture(), base);
+    expect(out).toContain("🕍 Eruv Status");
+    expect(out).toContain('href="https://www.chabadftlauderdale.com/templates/articlecco_cdo/aid/114576/jewish/Eiruv.htm"');
+    expect(out).toContain("For a detailed map of the Inverrary Eruv");
+    expect(out).not.toContain("Kosher for this Shabbos");
+    const off = fixture();
+    off.org.emailSettings = { eruvMapUrl: "" };
+    expect(renderEmail(off, base)).not.toContain("Eruv Status");
+  });
+
+  it("adds Community Resources with the printable newsletter and schedule", () => {
+    const out = renderEmail(fixture(), {
+      ...base,
+      newsletterPdfUrl: "https://shul.example.org/n/abc.pdf",
+      scheduleUrl: "https://shul.example.org/media/files/x.pdf",
+    });
+    expect(out).toContain("📚 Community Resources");
+    expect(out).toContain('href="https://shul.example.org/n/abc.pdf"');
+    expect(out).toContain("This Week&#39;s Newsletter (Printable Version)");
+    expect(out).toContain('href="https://shul.example.org/media/files/x.pdf"');
+    // Eruv comes before resources, as in the original email
+    expect(out.indexOf("Eruv Status")).toBeLessThan(out.indexOf("Community Resources"));
+  });
+
+  it("adds a Condolences section", () => {
+    const out = renderEmail(
+      fixture({
+        items: {
+          email: [
+            item("condolence", {
+              title: "the Goldberg family",
+              fields: { passing: "on the passing of their father", shiva: "Shiva at 1234 NW 44th St" },
+            }),
+          ],
+        },
+      }),
+      base,
+    );
+    expect(out).toContain("🕊️ Condolences");
+    expect(out).toContain("We extend our heartfelt condolences to <strong>the Goldberg family</strong> on the passing of their father.");
+    expect(out).toContain("Shiva at 1234 NW 44th St");
+    expect(out).toContain("המקום ינחם אתכם");
+  });
+
+  it("prints weekday sections by day", () => {
+    const d = fixture();
+    d.schedule.weekday = [
+      row("m1", "Mincha", "7:30PM", [1170], "", "weekday", [1, 3, 4]),
+      row("m2", "Mincha", "7:00PM", [1140], "", "weekday", [2]),
+    ];
+    d.weekdaySections = sectionsOf(d.schedule);
+    const out = renderEmail(d, base);
+    expect(out).toContain("<strong>Monday:</strong>");
+    expect(out).toContain("<strong>Tuesday:</strong><br>Mincha: 7:00PM");
+    expect(out).toContain("<strong>Wednesday - Thursday:</strong>");
   });
 });

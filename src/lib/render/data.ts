@@ -11,10 +11,14 @@ import type { ScheduleGroup } from "@/lib/schedule/rules";
 import { formatTime, formatTimeValue, type TimeValue } from "@/lib/time";
 import { storage } from "@/lib/storage";
 import { scheduleTimeFor } from "./schedule-match";
+import { buildDaySections, type DaySection } from "@/lib/schedule/days";
 import { effectiveCalendar, effectiveValue, getOrganization, listEntries } from "@/lib/weeks";
 
 export interface ScheduleRow {
   key: string;
+  group: ScheduleGroup;
+  /** Sunday–Thursday rows set to particular days this week (null = the group's usual days). */
+  days?: number[] | null;
   label: string;
   note: string;
   /** "7:27PM", "6:30 / 7:30AM", "B'zman" */
@@ -52,6 +56,8 @@ export interface RenderData {
   /** Rosh Chodesh, fasts, holidays, Mevorchim, molad… for the week. */
   events: CalendarEvent[];
   schedule: Record<ScheduleGroup, ScheduleRow[]>;
+  /** Sunday–Thursday split into sections of days with the same davening ("Sunday", "Monday – Thursday"). */
+  weekdaySections: DaySection<ScheduleRow>[];
   candleLighting: string;
   shabbosEnds: string;
   /** Approved, visible items placed in each publication, in display order. */
@@ -83,6 +89,11 @@ function rowDisplay(rows: ScheduleRow[], key: string, fallback: number | null, f
   return fallback === null ? "" : fmt(fallback);
 }
 
+/** Merge Sunday and Monday–Thursday rows (in schedule order) into day sections. */
+export function weekdaySections(schedule: Record<ScheduleGroup, ScheduleRow[]>): DaySection<ScheduleRow>[] {
+  return buildDaySections([...schedule.sunday, ...schedule.weekday], (r) => `${r.label}=${r.display}=${r.note}`);
+}
+
 /** Everything a template needs for one week, with overrides applied and hidden things removed. */
 export async function buildRenderData(week: Week): Promise<RenderData> {
   const [org, entries, items, pubs] = await Promise.all([
@@ -97,7 +108,15 @@ export async function buildRenderData(week: Week): Promise<RenderData> {
   for (const e of entries) {
     if (e.hidden) continue;
     const value = effectiveValue(e);
-    schedule[e.group].push({ key: e.key, label: e.label, note: e.note, value, display: formatTimeValue(value) });
+    schedule[e.group].push({
+      key: e.key,
+      group: e.group,
+      days: e.days,
+      label: e.label,
+      note: e.note,
+      value,
+      display: formatTimeValue(value),
+    });
   }
 
   const visible = items.filter((i) => !i.hidden && !i.skipped);
@@ -159,6 +178,7 @@ export async function buildRenderData(week: Week): Promise<RenderData> {
     days: cal.days,
     events: cal.events,
     schedule,
+    weekdaySections: weekdaySections(schedule),
     candleLighting: rowDisplay(schedule.friday, "candle_lighting", cal.days[0].zmanim.candleLighting, formatTime),
     shabbosEnds: rowDisplay(schedule.shabbos, "shabbos_ends", cal.days[1].zmanim.shabbosEnds, formatTime),
     items: byPub,

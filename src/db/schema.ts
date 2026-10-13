@@ -12,6 +12,7 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  uuid,
 } from "drizzle-orm/pg-core";
 import type { WeekCalendar } from "@/lib/calendar/week";
 import type { ZmanimSettings } from "@/lib/calendar/zmanim";
@@ -34,6 +35,14 @@ export interface EmailSettings {
   sponsorNote?: string;
   /** Extra lines in the footer. */
   footerNote?: string;
+  /** Eruv map link included in every email; undefined = the shul's Eruv page, "" = none. */
+  eruvMapUrl?: string;
+  /** "Community Resources" section: intro text. */
+  resourcesText?: string;
+  /** Uploaded seasonal davening schedule (PDF or image) linked from the email. */
+  scheduleAssetId?: number | null;
+  /** Button text for the seasonal schedule, e.g. "Full Winter Calendar (Printable Version)". */
+  scheduleLabel?: string;
 }
 
 /** The shul. There is one row; settings live here so they can be edited in the app. */
@@ -106,6 +115,10 @@ export const week = pgTable("week", {
   /** Manual corrections. Never touched by a sync. */
   calendarOverrides: jsonb("calendar_overrides").$type<CalendarOverrides>().notNull().default({}),
   status: text("status").$type<WeekStatus>().notNull().default("draft"),
+  /** The davening rows were reordered by hand; re-syncing keeps that order. */
+  customOrder: boolean("custom_order").notNull().default(false),
+  /** Unguessable id for the public printable-newsletter link in the email. */
+  publicToken: uuid("public_token").notNull().defaultRandom().unique(),
   syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
   ...timestamps,
 });
@@ -131,6 +144,8 @@ export const scheduleEntry = pgTable(
     autoValue: jsonb("auto_value").$type<TimeValue | null>(),
     autoError: text("auto_error"),
     overrideValue: jsonb("override_value").$type<TimeValue | null>(),
+    /** Sunday–Thursday rows: which days (0 = Sunday … 4 = Thursday). Null = the group's usual days. */
+    days: jsonb("days").$type<number[] | null>(),
     hidden: boolean("hidden").notNull().default(false),
     sortOrder: integer("sort_order").notNull().default(0),
     ...timestamps,

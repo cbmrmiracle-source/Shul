@@ -16,7 +16,7 @@ describe("Sicha shiur poster", () => {
 
   it("falls back to the davening row for the Sichos shiur", () => {
     const d = fixture();
-    d.schedule.shabbos.push(row("sicha_shiur", "Shiur in Likutei Sichos", "6:25PM", [1105]));
+    d.schedule.shabbos.push(row("sicha_shiur", "Shiur in Likutei Sichos", "6:25PM", [1105], "", "shabbos"));
     expect(buildHtml(TEMPLATES.poster_sicha!, d)).toContain('6:25<span class="ampm">PM</span>');
   });
 

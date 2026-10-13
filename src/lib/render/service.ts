@@ -1,4 +1,6 @@
 import "server-only";
+import { eq } from "drizzle-orm";
+import { db, schema } from "@/db";
 import type { Week } from "@/db/schema";
 import type { PublicationKey } from "@/lib/content/types";
 import { buildRenderData } from "./data";
@@ -53,9 +55,15 @@ export interface EmailResult {
 
 export async function renderEmailForWeek(week: Week, baseUrl: string): Promise<EmailResult> {
   const data = await buildRenderData(week);
+  const scheduleId = data.org.emailSettings.scheduleAssetId;
+  const [scheduleAsset] = scheduleId
+    ? await db.select().from(schema.asset).where(eq(schema.asset.id, scheduleId))
+    : [];
   const html = renderEmail(data, {
     imageUrl: (key) => `${baseUrl}/media/${key}`,
     placeholderLogoUrl: `${baseUrl}/brand/logo-placeholder.png`,
+    newsletterPdfUrl: newsletterPdfUrl(week, baseUrl),
+    scheduleUrl: scheduleAsset ? `${baseUrl}/media/${scheduleAsset.storageKey}` : undefined,
   });
   const warnings: string[] = [];
   const pending = data.pendingCount.email ?? 0;
@@ -65,4 +73,9 @@ export async function renderEmailForWeek(week: Week, baseUrl: string): Promise<E
   }
   if (!data.logoKey) warnings.push("Using the temporary logo. Upload the original in Settings.");
   return { html, subject: emailSubject(data), preheader: emailPreheader(data), warnings };
+}
+
+/** Public, unguessable link to a week's printable newsletter (used in the email). */
+export function newsletterPdfUrl(week: Week, baseUrl: string): string {
+  return `${baseUrl}/n/${week.publicToken}.pdf`;
 }

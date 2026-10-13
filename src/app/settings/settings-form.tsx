@@ -3,6 +3,7 @@
 import { keepFormOnSubmit } from "@/components/use-keep-form";
 import { useActionState } from "react";
 import type { Organization } from "@/db/schema";
+import { DEFAULT_ERUV_MAP_URL, DEFAULT_RESOURCES_TEXT, DEFAULT_SCHEDULE_LABEL } from "@/lib/email-defaults";
 import { saveSettings } from "./actions";
 
 function Field({ label, hint, ...props }: { label: string; hint?: string } & React.InputHTMLAttributes<HTMLInputElement>) {
@@ -86,6 +87,59 @@ export function SettingsForm({ org }: { org: Organization }) {
             <span className="text-sm font-medium">Extra footer text</span>
             <textarea name="footerNote" defaultValue={org.emailSettings.footerNote ?? ""} rows={2} className="input mt-1 w-full" />
           </label>
+          <Field
+            label="Eruv map link (in every email)"
+            name="eruvMapUrl"
+            type="url"
+            defaultValue={org.emailSettings.eruvMapUrl ?? DEFAULT_ERUV_MAP_URL}
+            hint="Leave empty to leave the Eruv section out unless the week has an Eruv Status item."
+          />
+          <div />
+        </div>
+
+        <h3 className="mt-6 mb-1 text-sm font-semibold text-navy">Community Resources (in every email)</h3>
+        <p className="mb-3 text-xs text-stone-500">
+          Links to this week&apos;s printable newsletter (made automatically) and the seasonal davening schedule you
+          upload here.
+        </p>
+        <div className="grid gap-4 md:grid-cols-2">
+          <label className="block md:col-span-2">
+            <span className="text-sm font-medium">Text</span>
+            <textarea
+              name="resourcesText"
+              defaultValue={org.emailSettings.resourcesText || DEFAULT_RESOURCES_TEXT}
+              rows={2}
+              className="input mt-1 w-full"
+            />
+          </label>
+          <label className="block">
+            <span className="text-sm font-medium">Seasonal schedule (PDF or image)</span>
+            <input name="scheduleFile" type="file" accept="application/pdf,image/png,image/jpeg" className="mt-1 block text-sm" />
+            <span className="mt-0.5 block text-xs text-stone-500">
+              {org.emailSettings.scheduleAssetId ? (
+                <>
+                  Current file:{" "}
+                  <a href={`/files/${org.emailSettings.scheduleAssetId}`} target="_blank" rel="noreferrer" className="text-navy underline">
+                    open
+                  </a>
+                  . Upload a new one to replace it (e.g. when switching to the winter schedule).
+                </>
+              ) : (
+                "No schedule uploaded yet."
+              )}
+            </span>
+            {org.emailSettings.scheduleAssetId ? (
+              <span className="mt-1 flex items-center gap-2 text-sm">
+                <input type="checkbox" name="removeSchedule" /> Remove the schedule link
+              </span>
+            ) : null}
+          </label>
+          <Field
+            label="Schedule button text"
+            name="scheduleLabel"
+            defaultValue={org.emailSettings.scheduleLabel || DEFAULT_SCHEDULE_LABEL}
+            placeholder="Full Winter Calendar (Printable Version)"
+          />
         </div>
       </section>
 
