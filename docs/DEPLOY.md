@@ -59,6 +59,14 @@ The first start creates the database tables and the shul's starting settings by 
 5. **Weeks → Open week**, check the times against Chabad.org for the first couple of weeks, add the week's
    content, then **View outputs**.
 
+## Connecting Mailchimp (optional)
+
+1. In Mailchimp: click your profile picture → **Profile** → **Extras** → **API keys** → **Create A Key**. Copy it.
+2. In Railway: app service → **Variables** → add `MAILCHIMP_API_KEY` with that key.
+3. After the redeploy, in the app: **Settings → Mailchimp** → choose the audience → **Save settings**.
+4. Each week: **View outputs → Send to Mailchimp (draft)**, then open the draft in Mailchimp, check it and click Send.
+   The app only ever makes drafts; it never sends to your list.
+
 ## Updating later
 
 Every time new work is pushed to the branch, Railway rebuilds and redeploys by itself. Your data,

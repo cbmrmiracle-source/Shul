@@ -1,0 +1,1 @@
+ALTER TABLE "week" ADD COLUMN "mailchimp" jsonb;

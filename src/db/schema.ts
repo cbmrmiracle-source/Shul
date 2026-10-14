@@ -43,6 +43,15 @@ export interface EmailSettings {
   scheduleAssetId?: number | null;
   /** Button text for the seasonal schedule, e.g. "Full Winter Calendar (Printable Version)". */
   scheduleLabel?: string;
+  /** Mailchimp audience (list) the weekly campaign goes to. */
+  mailchimpAudienceId?: string;
+}
+
+/** The Mailchimp draft campaign made for a week, so pushing again updates it. */
+export interface MailchimpLink {
+  campaignId: string;
+  webId: number;
+  pushedAt: string;
 }
 
 /** The shul. There is one row; settings live here so they can be edited in the app. */
@@ -119,6 +128,7 @@ export const week = pgTable("week", {
   customOrder: boolean("custom_order").notNull().default(false),
   /** Unguessable id for the public printable-newsletter link in the email. */
   publicToken: uuid("public_token").notNull().defaultRandom().unique(),
+  mailchimp: jsonb("mailchimp").$type<MailchimpLink | null>(),
   syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
   ...timestamps,
 });

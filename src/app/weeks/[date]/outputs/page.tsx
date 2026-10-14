@@ -7,6 +7,9 @@ import type { PublicationKey } from "@/lib/content/types";
 import { headers } from "next/headers";
 import { publicBaseUrl, renderEmailForWeek, renderPublication } from "@/lib/render/service";
 import { CopyEmailHtml, CopyText } from "./copy-buttons";
+import { MailchimpPanel } from "./mailchimp-panel";
+import { campaignUrl, createClient, mailchimpConfigured } from "@/lib/mailchimp";
+import { getOrganization } from "@/lib/weeks";
 import { TEMPLATES } from "@/lib/render/templates";
 import { getWeekByDate } from "@/lib/weeks";
 
@@ -40,6 +43,15 @@ export default async function OutputsPage({ params }: { params: Promise<{ date: 
   const origin = `${h.get("x-forwarded-proto") ?? "http"}://${h.get("x-forwarded-host") ?? h.get("host")}`;
   const email = await renderEmailForWeek(week, publicBaseUrl(origin));
   const emailUrl = `/weeks/${date}/email`;
+  const org = await getOrganization();
+  let mailchimpUrl: string | null = null;
+  if (week.mailchimp && mailchimpConfigured()) {
+    try {
+      mailchimpUrl = campaignUrl(createClient().dc, week.mailchimp.webId);
+    } catch {
+      mailchimpUrl = null;
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -90,8 +102,15 @@ export default async function OutputsPage({ params }: { params: Promise<{ date: 
                 ))}
               </ul>
             )}
+            <MailchimpPanel
+              weekDate={date}
+              configured={mailchimpConfigured()}
+              audienceChosen={Boolean(org.emailSettings.mailchimpAudienceId)}
+              existingUrl={mailchimpUrl}
+              pushedAt={week.mailchimp?.pushedAt ?? null}
+            />
             <div className="rounded bg-stone-50 p-3 text-xs text-stone-600">
-              <strong>To send with Mailchimp:</strong> click <em>Copy HTML for Mailchimp</em>, then in Mailchimp create the
+              <strong>Or copy and paste:</strong> click <em>Copy HTML for Mailchimp</em>, then in Mailchimp create the
               campaign, choose <em>Code your own → Paste in code</em>, select all and paste. Mailchimp adds its own
               unsubscribe footer.
             </div>

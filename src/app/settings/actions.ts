@@ -44,6 +44,7 @@ const settingsSchema = z.object({
     .refine((u) => u === "" || /^https?:\/\//i.test(u), "The Eruv map link must start with https://"),
   resourcesText: z.string().trim().max(1000),
   scheduleLabel: z.string().trim().max(200),
+  mailchimpAudienceId: z.string().trim().max(100).optional(),
 });
 
 /** "Bereshis = Bereishis" per line → { Bereshis: "Bereishis" } */
@@ -114,6 +115,8 @@ export async function saveSettings(_prev: string | null, form: FormData): Promis
         resourcesText: s.resourcesText,
         scheduleLabel: s.scheduleLabel,
         scheduleAssetId,
+        // Keep the saved audience when the Mailchimp section isn't shown (not connected).
+        mailchimpAudienceId: s.mailchimpAudienceId ?? org.emailSettings.mailchimpAudienceId,
       },
     })
     .where(eq(schema.organization.id, org.id));

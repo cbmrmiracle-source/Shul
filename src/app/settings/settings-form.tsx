@@ -3,6 +3,7 @@
 import { keepFormOnSubmit } from "@/components/use-keep-form";
 import { useActionState } from "react";
 import type { Organization } from "@/db/schema";
+import type { Audience } from "@/lib/mailchimp";
 import { DEFAULT_ERUV_MAP_URL, DEFAULT_RESOURCES_TEXT, DEFAULT_SCHEDULE_LABEL } from "@/lib/email-defaults";
 import { saveSettings } from "./actions";
 
@@ -26,7 +27,13 @@ function RoundSelect({ name, value }: { name: string; value?: string }) {
   );
 }
 
-export function SettingsForm({ org }: { org: Organization }) {
+export function SettingsForm({
+  org,
+  mailchimp,
+}: {
+  org: Organization;
+  mailchimp: { configured: boolean; audiences: Audience[]; error: string | null };
+}) {
   const [message, action, pending] = useActionState(saveSettings, null);
   const z = org.zmanim;
   const spellings = Object.entries(org.houseSpellings)
@@ -141,6 +148,47 @@ export function SettingsForm({ org }: { org: Organization }) {
             placeholder="Full Winter Calendar (Printable Version)"
           />
         </div>
+      </section>
+
+      <section id="mailchimp" className="card scroll-mt-4 p-5">
+        <h2 className="mb-1 font-semibold text-navy">Mailchimp</h2>
+        {!mailchimp.configured ? (
+          <div className="space-y-1 text-sm text-stone-600">
+            <p>Not connected. To connect:</p>
+            <ol className="ml-5 list-decimal space-y-0.5">
+              <li>
+                In Mailchimp, click your profile picture → <strong>Profile</strong> → <strong>Extras</strong> →{" "}
+                <strong>API keys</strong> → <strong>Create A Key</strong>, and copy it.
+              </li>
+              <li>
+                In Railway, open the app → <strong>Variables</strong> → add <code>MAILCHIMP_API_KEY</code> with that key.
+              </li>
+              <li>After Railway restarts the app (a few minutes), come back here to choose your audience.</li>
+            </ol>
+          </div>
+        ) : mailchimp.error ? (
+          <p className="text-sm text-red-700">{mailchimp.error}</p>
+        ) : (
+          <label className="block max-w-md">
+            <span className="text-sm font-medium">Send the weekly email to this audience</span>
+            <select
+              name="mailchimpAudienceId"
+              defaultValue={org.emailSettings.mailchimpAudienceId ?? ""}
+              className="input mt-1 w-full"
+            >
+              <option value="">Choose…</option>
+              {mailchimp.audiences.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} ({a.memberCount} contacts)
+                </option>
+              ))}
+            </select>
+            <span className="mt-0.5 block text-xs text-green-800">Connected ✓</span>
+          </label>
+        )}
+        {mailchimp.configured && mailchimp.error && (
+          <input type="hidden" name="mailchimpAudienceId" value={org.emailSettings.mailchimpAudienceId ?? ""} />
+        )}
       </section>
 
       <section className="card p-5">

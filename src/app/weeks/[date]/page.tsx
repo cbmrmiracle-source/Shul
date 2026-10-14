@@ -10,6 +10,7 @@ import { effectiveCalendar, effectiveValue, getOrganization, getWeekByDate, list
 import { resyncWeek, saveTitleOverrides, saveZmanOverride } from "./actions";
 import { AddEntryForm, ScheduleRow } from "./schedule-row";
 import { ContentSection } from "./content-section";
+import { CONTENT_TYPE_ORDER, CONTENT_TYPES } from "@/lib/content/types";
 import { listPublications, listWeekContent } from "@/lib/content/service";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +58,26 @@ export default async function WeekPage({ params }: { params: Promise<{ date: str
           View outputs →
         </Link>
       </div>
+
+      {/* Quick add: no need to scroll past the davening times ----------------- */}
+      <section className="card px-4 py-3">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-1 text-xs font-semibold text-stone-500 uppercase">Add to this week</span>
+          {CONTENT_TYPE_ORDER.map((t) => (
+            <Link key={t} href={`/weeks/${date}/items/new?type=${t}`} className="btn btn-sm">
+              {CONTENT_TYPES[t].icon} {CONTENT_TYPES[t].label}
+            </Link>
+          ))}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-3 text-xs text-navy">
+          <span className="text-stone-500">Jump to:</span>
+          <a href="#zmanim" className="hover:underline">Zmanim</a>
+          <a href="#davening" className="hover:underline">Davening Times</a>
+          <a href="#content" className="hover:underline">
+            Content ({items.length})
+          </a>
+        </div>
+      </section>
 
       {/* Header ------------------------------------------------------------ */}
       <section className="card overflow-hidden">
@@ -118,7 +139,7 @@ export default async function WeekPage({ params }: { params: Promise<{ date: str
       </section>
 
       {/* Zmanim ------------------------------------------------------------ */}
-      <section className="card">
+      <section id="zmanim" className="card scroll-mt-4">
         <div className="card-header">
           <h2 className="font-semibold text-navy">Zmanim</h2>
           <form action={resyncWeek} className="flex items-center gap-2 text-xs text-stone-500">
@@ -198,7 +219,7 @@ export default async function WeekPage({ params }: { params: Promise<{ date: str
       </section>
 
       {/* Davening ---------------------------------------------------------- */}
-      <section className="card">
+      <section id="davening" className="card scroll-mt-4">
         <div className="card-header">
           <h2 className="font-semibold text-navy">Davening Times</h2>
           <span className="text-xs text-stone-500">
