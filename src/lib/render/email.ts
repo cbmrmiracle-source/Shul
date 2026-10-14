@@ -336,7 +336,7 @@ ${s.body ? text(s.body) : ""}`,
   if (condolences.length) {
     sections.push(
       section(
-        "🕊️ Condolences",
+        "🕯️ Condolences",
         html`${condolences.map(
           (c, i) => html`${i > 0 ? html`<br>` : ""}${
             c.body ? text(c.body) : html`<p style="margin:0 0 6px 0;">We extend our heartfelt condolences to <strong>${c.title}</strong>${c.fields.passing ? ` ${c.fields.passing}` : ""}.</p>`

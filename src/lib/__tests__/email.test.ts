@@ -156,7 +156,7 @@ describe("email additions (October 2026)", () => {
       }),
       base,
     );
-    expect(out).toContain("🕊️ Condolences");
+    expect(out).toContain("🕯️ Condolences");
     expect(out).toContain("We extend our heartfelt condolences to <strong>the Goldberg family</strong> on the passing of their father.");
     expect(out).toContain("Shiva at 1234 NW 44th St");
     expect(out).toContain("המקום ינחם אתכם");

@@ -183,7 +183,7 @@ export function render(d: RenderData): SafeHtml {
   const condolences = by(items, "condolence");
   const condolenceCard = condolences.length
     ? card(
-        "🕊️",
+        "🕯️",
         "Condolences",
         html`${condolences.map(
           (c) => html`<div class="item">${c.body ? text(c.body) : html`We extend our heartfelt condolences to <span class="b">${c.title}</span>${c.fields.passing ? ` ${c.fields.passing}` : ""}.`}${

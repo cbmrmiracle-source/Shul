@@ -19,6 +19,7 @@ export const PUBLICATION_KEYS = [
   "poster_sicha",
   "whatsapp_shabbos",
   "whatsapp_weekly",
+  "poster_shiurim",
 ] as const;
 export type PublicationKey = (typeof PUBLICATION_KEYS)[number];
 
@@ -37,6 +38,8 @@ export const DEFAULT_PUBLICATIONS: {
   { key: "poster_sicha", name: "Sicha Shiur Poster", shortName: "Sicha", format: "poster" },
   { key: "whatsapp_shabbos", name: "Shabbos WhatsApp", shortName: "WA Shabbos", format: "whatsapp" },
   { key: "whatsapp_weekly", name: "Weekly WhatsApp", shortName: "WA Weekly", format: "whatsapp" },
+  // Added later; kept last so existing publications keep their positions.
+  { key: "poster_shiurim", name: "Shiurim Poster", shortName: "Shiurim", format: "poster" },
 ];
 
 export type CommonField = "title" | "body" | "image" | "link" | "eventDate" | "eventTime" | "hebrewDate";
@@ -169,7 +172,7 @@ const types = {
       { name: "location", label: "Location", input: "text" },
       { name: "audience", label: "For", input: "text", placeholder: "For Men" },
     ],
-    defaultPlacements: ["email", "newsletter"],
+    defaultPlacements: ["email", "newsletter", "poster_shiurim"],
     recurring: true,
     summary: (i) => join(i.fields.day, i.eventTime, i.fields.speaker),
   },
@@ -317,7 +320,7 @@ const types = {
     titleRequired: true,
     label: "Condolences",
     section: "Condolences",
-    icon: "🕊️",
+    icon: "🕯️",
     common: {
       title: { label: "Mourner(s) / family", placeholder: "the Goldberg family" },
       body: {

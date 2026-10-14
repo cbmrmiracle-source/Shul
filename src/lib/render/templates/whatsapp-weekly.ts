@@ -16,14 +16,10 @@ export const css = `
 .logo { width: 96px; margin-top: 2px; }
 h1 { margin: 8px 0 4px; font: 800 33px/1.05 'Playfair Display', serif; letter-spacing: .2px; color: #1a1611; text-align: center; }
 .body { flex: 1; width: 100%; text-align: center; display: flex; flex-direction: column; justify-content: center; }
-.sec { margin: 7px 0; }
-.label { font: 700 23px/1.2 'Libre Baskerville', serif; text-transform: uppercase; color: #1a1611; }
-.line { font: 700 20px/1.35 'Libre Baskerville', serif; color: #1a1611; letter-spacing: -.2px; }
-.sec.big .label { font-size: 31px; }
-.sec.big .line { font: 800 58px/1.02 'Libre Baskerville', serif; letter-spacing: -1px; text-shadow: 0 2px 6px rgba(120,100,40,.35); }
+.sec { margin: 9px 0; }
+.label { font: 700 24px/1.2 'Libre Baskerville', serif; text-transform: uppercase; color: #1a1611; }
+.line { font: 700 21px/1.38 'Libre Baskerville', serif; color: #1a1611; letter-spacing: -.2px; }
 `;
-
-const looksLikeTime = (s: string) => /^\d{1,2}:\d{2}/.test(s);
 
 export function render(d: RenderData): SafeHtml {
   const summary = summarizeMinyanim(d.weekdaySections, d.schedule.friday);
@@ -34,13 +30,12 @@ export function render(d: RenderData): SafeHtml {
       <img class="logo" src="${d.logo}" alt="">
       <h1>THIS WEEK’S MINYANIM</h1>
       <div class="body" data-fit="Minyanim"><div>
-        ${summary.map((s) => {
-          const big = s.lines.length === 1 && looksLikeTime(s.lines[0].text);
-          return html`<div class="sec ${big ? "big" : ""}">
+        ${summary.map(
+          (s) => html`<div class="sec">
             <div class="label">${s.label}:</div>
             ${s.lines.map((l) => html`<div class="line">${l.days ? `${l.days} - ` : ""}${l.text}</div>`)}
-          </div>`;
-        })}
+          </div>`,
+        )}
       </div></div>
     </div>`;
 }

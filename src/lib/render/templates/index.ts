@@ -5,6 +5,7 @@ import * as daveningPoster from "./davening-poster";
 import * as newsletter from "./newsletter";
 import * as posterFarbrengen from "./poster-farbrengen";
 import * as posterKids from "./poster-kids";
+import * as posterShiurim from "./poster-shiurim";
 import * as posterSicha from "./poster-sicha";
 import * as whatsappShabbos from "./whatsapp-shabbos";
 import * as whatsappWeekly from "./whatsapp-weekly";
@@ -30,6 +31,7 @@ export const TEMPLATES: Partial<Record<PublicationKey, OutputTemplate>> = {
   poster_farbrengen: { ...posterFarbrengen, width: posterFarbrengen.WIDTH, height: posterFarbrengen.HEIGHT, scale: 2, formats: ["png", "pdf"] },
   poster_kids: { ...posterKids, width: posterKids.WIDTH, height: posterKids.HEIGHT, scale: 2, formats: ["png", "pdf"] },
   poster_sicha: { ...posterSicha, width: posterSicha.WIDTH, height: posterSicha.HEIGHT, scale: 2, formats: ["png", "pdf"] },
+  poster_shiurim: { ...posterShiurim, width: posterShiurim.WIDTH, height: posterShiurim.HEIGHT, scale: 2, formats: ["png", "pdf"] },
   whatsapp_shabbos: { ...whatsappShabbos, width: whatsappShabbos.WIDTH, height: whatsappShabbos.HEIGHT, scale: 2, formats: ["png"] },
   whatsapp_weekly: { ...whatsappWeekly, width: whatsappWeekly.WIDTH, height: whatsappWeekly.HEIGHT, scale: 2, formats: ["png"] },
 };
