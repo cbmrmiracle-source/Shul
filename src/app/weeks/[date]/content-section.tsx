@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Publication } from "@/db/schema";
 import type { WeekContentItem } from "@/lib/content/service";
-import { CONTENT_TYPE_ORDER, CONTENT_TYPES } from "@/lib/content/types";
+import { addItemHref, CONTENT_TYPE_ORDER, CONTENT_TYPES } from "@/lib/content/types";
 import { approveAllPending, approveItem, setItemHidden, toggleItemPlacement } from "./content-actions";
 
 function Hidden({ name, value }: { name: string; value: string | number }) {
@@ -104,7 +104,7 @@ export function ContentSection({ items, pubs, date }: { items: WeekContentItem[]
         <div className="mb-1 text-xs font-semibold text-stone-500 uppercase">Add</div>
         <div className="flex flex-wrap gap-1.5">
           {CONTENT_TYPE_ORDER.map((t) => (
-            <Link key={t} href={`/weeks/${date}/items/new?type=${t}`} className="btn btn-sm">
+            <Link key={t} href={addItemHref(date, t)} className="btn btn-sm">
               {CONTENT_TYPES[t].icon} {CONTENT_TYPES[t].label}
             </Link>
           ))}
@@ -129,7 +129,7 @@ export function ContentSection({ items, pubs, date }: { items: WeekContentItem[]
               <h3 className="text-sm font-semibold text-navy">
                 {type.icon} {type.section}
               </h3>
-              <Link href={`/weeks/${date}/items/new?type=${t}`} className="text-xs text-navy hover:underline">
+              <Link href={addItemHref(date, t)} className="text-xs text-navy hover:underline">
                 + Add {type.label}
               </Link>
             </div>

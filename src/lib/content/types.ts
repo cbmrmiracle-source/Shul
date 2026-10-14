@@ -362,3 +362,8 @@ export const CONTENT_TYPE_ORDER = Object.keys(types) as ContentTypeKey[];
 export function isContentType(value: string): value is ContentTypeKey {
   return Object.hasOwn(types, value);
 }
+
+/** Where the "add" buttons go. Jewish History is pasted in a week at a time. */
+export function addItemHref(weekDate: string, type: ContentTypeKey): string {
+  return type === "jewish_history" ? `/weeks/${weekDate}/history` : `/weeks/${weekDate}/items/new?type=${type}`;
+}

@@ -10,7 +10,7 @@ import { effectiveCalendar, effectiveValue, getOrganization, getWeekByDate, list
 import { resyncWeek, saveTitleOverrides, saveZmanOverride } from "./actions";
 import { AddEntryForm, ScheduleRow } from "./schedule-row";
 import { ContentSection } from "./content-section";
-import { CONTENT_TYPE_ORDER, CONTENT_TYPES } from "@/lib/content/types";
+import { addItemHref, CONTENT_TYPE_ORDER, CONTENT_TYPES } from "@/lib/content/types";
 import { listPublications, listWeekContent } from "@/lib/content/service";
 
 export const dynamic = "force-dynamic";
@@ -64,7 +64,7 @@ export default async function WeekPage({ params }: { params: Promise<{ date: str
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="mr-1 text-xs font-semibold text-stone-500 uppercase">Add to this week</span>
           {CONTENT_TYPE_ORDER.map((t) => (
-            <Link key={t} href={`/weeks/${date}/items/new?type=${t}`} className="btn btn-sm">
+            <Link key={t} href={addItemHref(date, t)} className="btn btn-sm">
               {CONTENT_TYPES[t].icon} {CONTENT_TYPES[t].label}
             </Link>
           ))}
