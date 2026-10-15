@@ -60,6 +60,8 @@ export interface RenderData {
   weekdaySections: DaySection<ScheduleRow>[];
   candleLighting: string;
   shabbosEnds: string;
+  /** Shiurim follow their hand-set order rather than day and time. */
+  manualShiurOrder?: boolean;
   /** Approved, visible items placed in each publication, in display order. */
   items: Partial<Record<PublicationKey, RenderItem[]>>;
   /** Placed items left out because they still need review. */
@@ -181,6 +183,7 @@ export async function buildRenderData(week: Week): Promise<RenderData> {
     weekdaySections: weekdaySections(schedule),
     candleLighting: rowDisplay(schedule.friday, "candle_lighting", cal.days[0].zmanim.candleLighting, formatTime),
     shabbosEnds: rowDisplay(schedule.shabbos, "shabbos_ends", cal.days[1].zmanim.shabbosEnds, formatTime),
+    manualShiurOrder: org.manualShiurOrder,
     items: byPub,
     pendingCount,
   };

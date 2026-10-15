@@ -1,9 +1,10 @@
 import "server-only";
+import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import type { Week } from "@/db/schema";
 import type { PublicationKey } from "@/lib/content/types";
-import { buildRenderData } from "./data";
+import { buildRenderData, type RenderData } from "./data";
 import { emailPreheader, emailSubject, renderEmail } from "./email";
 import { renderOutput, type RenderResult } from "./renderer";
 import { TEMPLATES } from "./templates";
@@ -64,6 +65,7 @@ export async function renderEmailForWeek(week: Week, baseUrl: string): Promise<E
     placeholderLogoUrl: `${baseUrl}/brand/logo-placeholder.png`,
     newsletterPdfUrl: newsletterPdfUrl(week, baseUrl),
     scheduleUrl: scheduleAsset ? `${baseUrl}/media/${scheduleAsset.storageKey}` : undefined,
+    kidsPosterUrl: kidsPosterUrl(week, data, baseUrl),
   });
   const warnings: string[] = [];
   const pending = data.pendingCount.email ?? 0;
@@ -78,4 +80,16 @@ export async function renderEmailForWeek(week: Week, baseUrl: string): Promise<E
 /** Public, unguessable link to a week's printable newsletter (used in the email). */
 export function newsletterPdfUrl(week: Week, baseUrl: string): string {
   return `${baseUrl}/n/${week.publicToken}.pdf`;
+}
+
+/**
+ * Public link to the week's Children's Poster image, when it has programs.
+ * The ?v= part changes with the poster's content so email readers never see
+ * an old copy.
+ */
+export function kidsPosterUrl(week: Week, data: RenderData, baseUrl: string): string | undefined {
+  const kids = (data.items.poster_kids ?? []).filter((i) => i.type === "kids_program");
+  if (!kids.length) return undefined;
+  const v = createHash("sha1").update(JSON.stringify([data.items.poster_kids, data.logoKey, data.titleEn])).digest("hex").slice(0, 10);
+  return `${baseUrl}/n/${week.publicToken}-kids.png?v=${v}`;
 }

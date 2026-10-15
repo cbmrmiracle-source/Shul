@@ -1,8 +1,10 @@
 "use server";
 
+import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { db, schema } from "@/db";
 import type { PlacementVariant } from "@/db/schema";
 import { requireAuth } from "@/lib/auth/server";
 import { isCivilDate } from "@/lib/calendar/dates";
@@ -15,13 +17,15 @@ import {
   listPublications,
   listWeekContent,
   setHiddenForWeek,
+  setItemOrder,
   setPlacements,
   togglePlacement,
   updateItem,
 } from "@/lib/content/service";
 import { CONTENT_TYPES, isContentType } from "@/lib/content/types";
+import { sortShiurItems } from "@/lib/render/shiurim";
 import { saveImage } from "@/lib/storage/images";
-import { getWeekByDate } from "@/lib/weeks";
+import { getOrganization, getWeekByDate } from "@/lib/weeks";
 
 const id = z.coerce.number().int().positive();
 
@@ -189,4 +193,43 @@ export async function savePlacementGrid(form: FormData) {
   }
   revalidatePath(`/weeks/${date}`);
   redirect(`/weeks/${date}#content`);
+}
+
+/**
+ * Move an item up or down among this week's items of the same type. The first
+ * move of a shiur starts from the automatic day-and-time order and switches
+ * shiurim to the hand-set order.
+ */
+export async function moveItem(form: FormData) {
+  await requireAuth();
+  const date = String(form.get("weekDate") ?? "");
+  const itemId = id.parse(form.get("itemId"));
+  const week = await loadItemInWeek(date, itemId);
+  const items = await listWeekContent(week);
+  const item = items.find((i) => i.id === itemId)!;
+  let same = items.filter((i) => i.type === item.type);
+
+  const org = await getOrganization();
+  if (item.type === "shiur" && !org.manualShiurOrder) {
+    same = sortShiurItems(same);
+    await db.update(schema.organization).set({ manualShiurOrder: true }).where(eq(schema.organization.id, org.id));
+  }
+  const ids = same.map((i) => i.id);
+  const from = ids.indexOf(itemId);
+  const to = form.get("dir") === "up" ? from - 1 : from + 1;
+  if (to >= 0 && to < ids.length) [ids[from], ids[to]] = [ids[to], ids[from]];
+  await setItemOrder(ids);
+  revalidatePath(`/weeks/${date}`);
+}
+
+/** Put shiurim back in day-and-time order. */
+export async function sortShiurimAutomatically(form: FormData) {
+  await requireAuth();
+  const date = String(form.get("weekDate") ?? "");
+  const week = await loadWeek(date);
+  const org = await getOrganization();
+  const shiurim = sortShiurItems((await listWeekContent(week)).filter((i) => i.type === "shiur"));
+  await setItemOrder(shiurim.map((i) => i.id));
+  await db.update(schema.organization).set({ manualShiurOrder: false }).where(eq(schema.organization.id, org.id));
+  revalidatePath(`/weeks/${date}`);
 }

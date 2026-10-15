@@ -7,6 +7,7 @@
  * the <style> block only adds mobile padding. Images must be public URLs, so
  * the caller supplies `imageUrl` to turn storage keys into links.
  */
+import { sortShiurItems } from "./shiurim";
 import type { RenderData, RenderItem, ScheduleRow } from "./data";
 import { bidi, formatInline, formatText, html, raw, type HtmlValue, type SafeHtml } from "./html";
 import { dayRangeLabel } from "@/lib/schedule/days";
@@ -22,6 +23,8 @@ export interface EmailOptions {
   newsletterPdfUrl?: string;
   /** Public link to the uploaded seasonal davening schedule (Community Resources). */
   scheduleUrl?: string;
+  /** Public link to this week's Children's Poster image, shown above the kids programs. */
+  kidsPosterUrl?: string;
 }
 
 const C = {
@@ -197,11 +200,12 @@ ${d.org.emailSettings.sponsorNote ? html`<span style="color:${C.muted};">${d.org
 
   // Kids
   const kids = by(items, "kids_program");
-  if (kids.length) {
+  if (kids.length || opts.kidsPosterUrl) {
     sections.push(
       section(
         "👦👧 Kids Program",
-        html`${kids.map((k) => {
+        html`${opts.kidsPosterUrl ? html`<a href="${opts.kidsPosterUrl}" target="_blank">${image(opts.kidsPosterUrl, "This week's Kids Program poster")}</a>` : ""}
+${kids.map((k) => {
           const details = [k.fields.ages, k.eventTime, k.fields.location && `Location: ${k.fields.location}`].filter(Boolean).join(" | ");
           const status = k.fields.status === "no_program" ? " – NO PROGRAM this week" : k.fields.status === "back" ? " – We're back!" : "";
           return html`${image(img(k), k.title)}<p style="margin:0 0 12px 0;"><strong>${k.title}${status}</strong>${details ? html`<br>${details}` : ""}</p>
@@ -234,7 +238,7 @@ ${e.linkUrl ? html` ${button(e.linkUrl, e.linkLabel || "More Info")}` : ""}`;
   }
 
   // Shiurim
-  const shiurim = by(items, "shiur");
+  const shiurim = d.manualShiurOrder ? by(items, "shiur") : sortShiurItems(by(items, "shiur"));
   if (shiurim.length) {
     sections.push(
       section(

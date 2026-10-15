@@ -167,6 +167,15 @@ export async function updateItem(
     .where(eq(schema.contentItem.id, id));
 }
 
+/** Number items 10, 20, 30… in the given order. */
+export async function setItemOrder(ids: number[]): Promise<void> {
+  await db.transaction(async (tx) => {
+    for (const [i, id] of ids.entries()) {
+      await tx.update(schema.contentItem).set({ sortOrder: (i + 1) * 10 }).where(eq(schema.contentItem.id, id));
+    }
+  });
+}
+
 /** Replace an item's placements (publication id → variant). */
 export async function setPlacements(itemId: number, placements: Map<number, PlacementVariant>): Promise<void> {
   await db.transaction(async (tx) => {

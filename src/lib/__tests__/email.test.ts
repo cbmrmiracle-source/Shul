@@ -142,6 +142,19 @@ describe("email additions (October 2026)", () => {
     expect(out.indexOf("Eruv Status")).toBeLessThan(out.indexOf("Community Resources"));
   });
 
+  it("shows the Children's Poster above the written kids programs", () => {
+    const url = "https://shul.example.org/n/abc-kids.png?v=1";
+    const out = renderEmail(
+      fixture({ items: { email: [item("kids_program", { title: "Teen Girls Club", eventTime: "7:00PM" })] } }),
+      { ...base, kidsPosterUrl: url },
+    );
+    expect(out).toContain(`src="${url}"`);
+    expect(out.indexOf(url)).toBeLessThan(out.indexOf("Teen Girls Club"));
+    // Poster alone still gets the section
+    expect(renderEmail(fixture(), { ...base, kidsPosterUrl: url })).toContain("Kids Program");
+    expect(renderEmail(fixture(), base)).not.toContain("Kids Program");
+  });
+
   it("adds a Condolences section", () => {
     const out = renderEmail(
       fixture({

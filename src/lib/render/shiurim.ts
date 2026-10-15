@@ -40,14 +40,24 @@ function weekdayOf(civil: string | null): string {
   return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Shabbos"][n];
 }
 
+/** Day, then time: the automatic order for shiurim. */
+export function sortShiurItems<T extends { fields: Record<string, string>; eventDate: string | null; eventTime: string }>(
+  items: T[],
+): T[] {
+  const day = (i: T) => i.fields.day || weekdayOf(i.eventDate);
+  return [...items].sort((a, b) => dayRank(day(a)) - dayRank(day(b)) || minutes(a.eventTime) - minutes(b.eventTime));
+}
+
 const isSichos = (s: string) => /sicha|sichos/i.test(s);
 
 /**
  * The week's shiurim for the Shiurim poster: every Shiur item ticked for it,
  * plus the Likutei Sichos shiur from the davening schedule when no ticked
- * item already covers it. Grouped by day (Friday, Shabbos, Sunday…), by time.
+ * item already covers it. Grouped by day (Friday, Shabbos, Sunday…), by time,
+ * unless the shiurim were put in order by hand: then that order is kept and
+ * days appear in the order their first shiur does.
  */
-export function collectShiurim(d: Pick<RenderData, "items" | "schedule">): ShiurDay[] {
+export function collectShiurim(d: Pick<RenderData, "items" | "schedule" | "manualShiurOrder">): ShiurDay[] {
   const items: RenderItem[] = (d.items.poster_shiurim ?? []).filter((i) => i.type === "shiur");
   const entries: ShiurEntry[] = items.map((i) => ({
     title: i.title,
@@ -63,14 +73,20 @@ export function collectShiurim(d: Pick<RenderData, "items" | "schedule">): Shiur
     for (const [group, day] of [["friday", "Friday"], ["shabbos", "Shabbos"], ["sunday", "Sunday"], ["weekday", "Monday – Thursday"]] as const) {
       const row = d.schedule[group].find((r) => isSichos(r.label));
       if (row) {
-        entries.push({ title: row.label, day, time: row.display, speaker: "", location: "", audience: "", description: row.note });
+        const sicha = { title: row.label, day, time: row.display, speaker: "", location: "", audience: "", description: row.note };
+        // In a hand-set order, put it after the last shiur on the same day or earlier.
+        const at = d.manualShiurOrder ? entries.findLastIndex((e) => dayRank(e.day) <= dayRank(day)) + 1 : entries.length;
+        entries.splice(at, 0, sicha);
         break;
       }
     }
   }
 
+  const ordered = d.manualShiurOrder
+    ? entries
+    : [...entries].sort((a, b) => dayRank(a.day) - dayRank(b.day) || minutes(a.time) - minutes(b.time));
   const days = new Map<string, ShiurEntry[]>();
-  for (const e of [...entries].sort((a, b) => dayRank(a.day) - dayRank(b.day) || minutes(a.time) - minutes(b.time))) {
+  for (const e of ordered) {
     const key = e.day || "This Week";
     days.set(key, [...(days.get(key) ?? []), e]);
   }

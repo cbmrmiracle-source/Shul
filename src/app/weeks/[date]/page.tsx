@@ -254,7 +254,7 @@ export default async function WeekPage({ params }: { params: Promise<{ date: str
         </div>
       </section>
 
-      <ContentSection items={items} pubs={pubs} date={date} />
+      <ContentSection items={items} pubs={pubs} date={date} manualShiurOrder={org.manualShiurOrder} />
     </div>
   );
 }

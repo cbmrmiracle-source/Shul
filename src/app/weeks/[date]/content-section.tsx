@@ -2,13 +2,48 @@ import Link from "next/link";
 import type { Publication } from "@/db/schema";
 import type { WeekContentItem } from "@/lib/content/service";
 import { addItemHref, CONTENT_TYPE_ORDER, CONTENT_TYPES } from "@/lib/content/types";
-import { approveAllPending, approveItem, setItemHidden, toggleItemPlacement } from "./content-actions";
+import { sortShiurItems } from "@/lib/render/shiurim";
+import {
+  approveAllPending,
+  approveItem,
+  moveItem,
+  setItemHidden,
+  sortShiurimAutomatically,
+  toggleItemPlacement,
+} from "./content-actions";
+
+/** Types whose outputs follow the order set here. */
+const ORDERABLE = new Set<string>(["kids_program", "shiur"]);
 
 function Hidden({ name, value }: { name: string; value: string | number }) {
   return <input type="hidden" name={name} value={value} />;
 }
 
-function ItemRow({ item, pubs, date }: { item: WeekContentItem; pubs: Publication[]; date: string }) {
+function MoveButton({ date, itemId, dir }: { date: string; itemId: number; dir: "up" | "down" }) {
+  return (
+    <form action={moveItem}>
+      <Hidden name="weekDate" value={date} />
+      <Hidden name="itemId" value={itemId} />
+      <Hidden name="dir" value={dir} />
+      <button className="btn btn-sm px-2" title={dir === "up" ? "Move up" : "Move down"} aria-label={dir === "up" ? "Move up" : "Move down"}>
+        {dir === "up" ? "↑" : "↓"}
+      </button>
+    </form>
+  );
+}
+
+function ItemRow({
+  item,
+  pubs,
+  date,
+  position,
+}: {
+  item: WeekContentItem;
+  pubs: Publication[];
+  date: string;
+  /** Set for types that can be put in order by hand. */
+  position?: { first: boolean; last: boolean };
+}) {
   const type = CONTENT_TYPES[item.type];
   const off = item.hidden || item.skipped;
   const summary = type.summary(item);
@@ -31,6 +66,8 @@ function ItemRow({ item, pubs, date }: { item: WeekContentItem; pubs: Publicatio
           {item.title && summary && <div className="truncate text-sm text-stone-500">{summary}</div>}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          {position && !position.first && <MoveButton date={date} itemId={item.id} dir="up" />}
+          {position && !position.last && <MoveButton date={date} itemId={item.id} dir="down" />}
           {item.reviewStatus === "pending" && (
             <form action={approveItem}>
               <Hidden name="weekDate" value={date} />
@@ -78,7 +115,17 @@ function ItemRow({ item, pubs, date }: { item: WeekContentItem; pubs: Publicatio
   );
 }
 
-export function ContentSection({ items, pubs, date }: { items: WeekContentItem[]; pubs: Publication[]; date: string }) {
+export function ContentSection({
+  items,
+  pubs,
+  date,
+  manualShiurOrder,
+}: {
+  items: WeekContentItem[];
+  pubs: Publication[];
+  date: string;
+  manualShiurOrder: boolean;
+}) {
   const pending = items.filter((i) => i.reviewStatus === "pending" && !i.hidden && !i.skipped);
   const typesPresent = CONTENT_TYPE_ORDER.filter((t) => items.some((i) => i.type === t));
 
@@ -123,6 +170,9 @@ export function ContentSection({ items, pubs, date }: { items: WeekContentItem[]
 
       {typesPresent.map((t) => {
         const type = CONTENT_TYPES[t];
+        const ofType = items.filter((i) => i.type === t);
+        const list = t === "shiur" && !manualShiurOrder ? sortShiurItems(ofType) : ofType;
+        const orderable = ORDERABLE.has(t) && list.length > 1;
         return (
           <div key={t} className="border-t border-stone-100 px-4 py-3">
             <div className="flex items-center justify-between">
@@ -133,12 +183,29 @@ export function ContentSection({ items, pubs, date }: { items: WeekContentItem[]
                 + Add {type.label}
               </Link>
             </div>
+            {orderable && (
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                {t === "shiur" && !manualShiurOrder
+                  ? "Shown by day and time. Use ↑ ↓ to set your own order."
+                  : "Outputs follow this order. Use ↑ ↓ to change it."}
+                {t === "shiur" && manualShiurOrder && (
+                  <form action={sortShiurimAutomatically}>
+                    <Hidden name="weekDate" value={date} />
+                    <button className="text-navy underline">Sort by day and time again</button>
+                  </form>
+                )}
+              </div>
+            )}
             <div className="divide-y divide-stone-100">
-              {items
-                .filter((i) => i.type === t)
-                .map((item) => (
-                  <ItemRow key={item.id} item={item} pubs={pubs} date={date} />
-                ))}
+              {list.map((item, i) => (
+                <ItemRow
+                  key={item.id}
+                  item={item}
+                  pubs={pubs}
+                  date={date}
+                  position={orderable ? { first: i === 0, last: i === list.length - 1 } : undefined}
+                />
+              ))}
             </div>
           </div>
         );

@@ -70,6 +70,8 @@ export const organization = pgTable("organization", {
   emailSettings: jsonb("email_settings").$type<EmailSettings>().notNull().default({}),
   /** Spelling fixes on top of Hebcal's Ashkenazi names, e.g. Bereshis → Bereishis. */
   houseSpellings: jsonb("house_spellings").$type<Record<string, string>>().notNull().default({}),
+  /** Shiurim follow the order set by hand instead of day and time. */
+  manualShiurOrder: boolean("manual_shiur_order").notNull().default(false),
   ...timestamps,
 });
 

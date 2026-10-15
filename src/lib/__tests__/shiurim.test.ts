@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildHtml, renderOutput } from "@/lib/render/renderer";
-import { collectShiurim } from "@/lib/render/shiurim";
+import { collectShiurim, sortShiurItems } from "@/lib/render/shiurim";
 import { TEMPLATES } from "@/lib/render/templates";
 import { fixture, item, row } from "./fixtures";
 
@@ -25,6 +25,19 @@ describe("Shiurim poster", () => {
     expect(days.map((g) => g.day)).toEqual(["Shabbos", "Sunday", "Tuesday"]);
     expect(days[0].shiurim.map((s) => `${s.time} ${s.title}`)).toEqual(["9:15AM Chassidus", "6:25PM Shiur in Likutei Sichos"]);
     expect(days[2].shiurim.map((s) => s.title)).toEqual(["Women's Parsha Class", "Gemara Shiur"]);
+  });
+
+  it("keeps a hand-set order, slotting the Sicha shiur in by day", () => {
+    const d = { ...week(), manualShiurOrder: true };
+    const days = collectShiurim(d);
+    expect(days.map((g) => g.day)).toEqual(["Tuesday", "Sunday", "Shabbos"]);
+    expect(days[0].shiurim.map((s) => s.title)).toEqual(["Gemara Shiur", "Women's Parsha Class"]);
+    expect(days[2].shiurim.map((s) => s.title)).toEqual(["Chassidus", "Shiur in Likutei Sichos"]);
+  });
+
+  it("sorts shiur items by day and time", () => {
+    const sorted = sortShiurItems(week().items.poster_shiurim!);
+    expect(sorted.map((s) => s.title)).toEqual(["Chassidus", "Tanya", "Women's Parsha Class", "Gemara Shiur"]);
   });
 
   it("doesn't add the Sicha shiur twice when it is ticked as an item", () => {

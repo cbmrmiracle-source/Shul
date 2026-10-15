@@ -1,3 +1,4 @@
+import { sortShiurItems } from "../shiurim";
 import type { DayInfo } from "@/lib/calendar/week";
 import type { RenderData, RenderItem, ScheduleRow } from "../data";
 import { bidi, formatInline, formatText, html, type HtmlValue, type SafeHtml } from "../html";
@@ -202,7 +203,7 @@ export function render(d: RenderData): SafeHtml {
     ? card("🌙", "This Week", html`${calEvents.map((e) => html`<div>${e}</div>`)}`)
     : "";
 
-  const shiurim = by(items, "shiur");
+  const shiurim = d.manualShiurOrder ? by(items, "shiur") : sortShiurItems(by(items, "shiur"));
   const shiurCard = shiurim.length
     ? card(
         "📚",
