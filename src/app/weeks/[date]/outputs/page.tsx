@@ -159,6 +159,11 @@ export default async function OutputsPage({ params }: { params: Promise<{ date: 
                       ))}
                     </ul>
                   )}
+                  {pub.key === "newsletter" && (
+                    <Link href={`/weeks/${date}/layout`} className="inline-block text-sm text-navy underline">
+                      Move boxes between page 1 and page 2 for this week →
+                    </Link>
+                  )}
                   <div className="flex flex-wrap gap-2">
                     {template!.formats.flatMap((f) =>
                       f === "png" && (template!.pages ?? 1) > 1

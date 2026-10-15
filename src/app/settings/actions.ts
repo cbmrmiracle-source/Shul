@@ -1,5 +1,6 @@
 "use server";
 
+import { layoutFromForm } from "@/lib/newsletter-layout";
 import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -107,6 +108,7 @@ export async function saveSettings(_prev: string | null, form: FormData): Promis
       zmanim,
       houseSpellings: parseSpellings(s.houseSpellings),
       logoAssetId,
+      newsletterLayout: layoutFromForm(form),
       emailSettings: {
         newsletterName: s.newsletterName,
         sponsorNote: s.sponsorNote,

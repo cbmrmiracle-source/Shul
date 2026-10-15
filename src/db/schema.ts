@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import type { NewsletterLayout } from "@/lib/newsletter-layout";
 import {
   type AnyPgColumn,
   boolean,
@@ -72,6 +73,8 @@ export const organization = pgTable("organization", {
   houseSpellings: jsonb("house_spellings").$type<Record<string, string>>().notNull().default({}),
   /** Shiurim follow the order set by hand instead of day and time. */
   manualShiurOrder: boolean("manual_shiur_order").notNull().default(false),
+  /** Which page/column each print newsletter box goes in, by default. */
+  newsletterLayout: jsonb("newsletter_layout").$type<NewsletterLayout>().notNull().default({}),
   ...timestamps,
 });
 
@@ -128,6 +131,8 @@ export const week = pgTable("week", {
   status: text("status").$type<WeekStatus>().notNull().default("draft"),
   /** The davening rows were reordered by hand; re-syncing keeps that order. */
   customOrder: boolean("custom_order").notNull().default(false),
+  /** This week's print newsletter layout choices, on top of the shul's defaults. */
+  newsletterLayout: jsonb("newsletter_layout").$type<NewsletterLayout>().notNull().default({}),
   /** Unguessable id for the public printable-newsletter link in the email. */
   publicToken: uuid("public_token").notNull().defaultRandom().unique(),
   mailchimp: jsonb("mailchimp").$type<MailchimpLink | null>(),

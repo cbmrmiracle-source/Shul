@@ -6,6 +6,7 @@ import { formatText } from "@/lib/render/html";
 import { buildHtml, renderOutput } from "@/lib/render/renderer";
 import { TEMPLATES } from "@/lib/render/templates";
 import { calendarNotes } from "@/lib/render/templates/newsletter";
+import { resolveLayout } from "@/lib/newsletter-layout";
 import { fixture, item } from "./fixtures";
 
 const T = TEMPLATES.newsletter!;
@@ -39,6 +40,19 @@ describe("print newsletter", () => {
     // one Monday heading for both Monday events
     expect(p2.match(/<div class="day">Monday<\/div>/g)).toHaveLength(1);
     expect(p2).toContain('<div class="answer">Answer: Arami Oved Avi</div>');
+  });
+
+  it("moves boxes to the page chosen in the layout", () => {
+    const moved = buildHtml(T, { ...data, newsletterLayout: resolveLayout({ parsha: "p1-left", birthdays: "p2-left" }) });
+    const [p1, p2] = moved.split('<div class="page p2">');
+    expect(p1).toContain("Parsha in a Nutshell");
+    expect(p1).toContain("Page 1, left column (schedule, Parsha in a Nutshell)");
+    expect(p2).toContain("Chani Goldman • Shneur Stern");
+    expect(p2).toContain("Page 2, left column (Happy Birthday, Parsha Riddle)");
+    // Fixed boxes stay put
+    expect(p1).toContain("Weekly Schedule");
+    expect(p1).toContain("Sponsored by:");
+    expect(p2).toContain("Week in Jewish History");
   });
 
   it("leaves out empty sections", () => {

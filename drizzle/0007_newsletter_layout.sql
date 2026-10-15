@@ -1,0 +1,2 @@
+ALTER TABLE "organization" ADD COLUMN "newsletter_layout" jsonb DEFAULT '{}'::jsonb NOT NULL;--> statement-breakpoint
+ALTER TABLE "week" ADD COLUMN "newsletter_layout" jsonb DEFAULT '{}'::jsonb NOT NULL;

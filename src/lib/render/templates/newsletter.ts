@@ -1,7 +1,8 @@
+import { NEWSLETTER_BLOCKS, resolveLayout, type NewsletterBlock, type NewsletterSlot } from "@/lib/newsletter-layout";
 import { sortShiurItems } from "../shiurim";
 import type { DayInfo } from "@/lib/calendar/week";
 import type { RenderData, RenderItem, ScheduleRow } from "../data";
-import { bidi, formatInline, formatText, html, type HtmlValue, type SafeHtml } from "../html";
+import { bidi, formatInline, formatText, html, SafeHtml, type HtmlValue } from "../html";
 import { BH, COLORS, emoji, sectionHeading } from "./shared";
 import { sponsorGroups } from "../sponsors";
 
@@ -9,8 +10,12 @@ import { sponsorGroups } from "../sponsors";
  * "The Shabbos Connection": one Letter sheet, printed double-sided.
  * Follows the Ki Savo 5786 PDF and the block library in NEWSLETTER_TEMPLATES.pub.
  *
- * Page 1: Weekly Schedule + Kids Corner | Farbrengen, Events, Birthdays, Mazal Tov, Yahrzeits
- * Page 2: Parsha, Haftorah, Calendar, Shiurim, Riddle, Community | Week in Jewish History
+ * Page 1: Weekly Schedule + … | Farbrengen + …
+ * Page 2: … | Week in Jewish History
+ *
+ * The other boxes go where the layout setting puts them (see newsletter-layout.ts);
+ * by default Kids Corner under the schedule, Events through Condolences under the
+ * farbrengen, and Parsha through Community on page 2.
  *
  * Each column shrinks to fit (and is flagged) when there is too much content.
  */
@@ -256,6 +261,27 @@ export function render(d: RenderData): SafeHtml {
       )
     : "";
 
+  const blocks: Record<NewsletterBlock, HtmlValue> = {
+    kids: kidsCard,
+    events: eventsCard,
+    birthdays: birthdayCard,
+    mazalTov: mazalCard,
+    yahrzeits: yahrzeitCard,
+    condolences: condolenceCard,
+    parsha,
+    haftorah,
+    calendar: calendarCard,
+    shiurim: shiurCard,
+    riddle: riddleCard,
+    community: communityCard,
+  };
+  const layout = d.newsletterLayout ?? resolveLayout();
+  const inSlot = (slot: NewsletterSlot) => NEWSLETTER_BLOCKS.filter((b) => layout[b.key] === slot);
+  const slot = (s: NewsletterSlot) => inSlot(s).map((b) => blocks[b.key]);
+  // Names for the "shrunk to fit" warning, listing only boxes that have content.
+  const names = (s: NewsletterSlot, fixed: string[]) =>
+    [...fixed, ...inSlot(s).filter((b) => hasContent(blocks[b.key])).map((b) => b.label.replace(/ \(.*\)$/, ""))].join(", ");
+
   return html`
   <div class="page p1">
     <header class="hdr">
@@ -267,21 +293,25 @@ export function render(d: RenderData): SafeHtml {
     </header>
     <div class="goldbar"></div>
     <div class="cols">
-      <div class="col c-left" data-fit="Page 1, left column (schedule, kids)"><div>${schedule}${kidsCard}</div></div>
-      <div class="col c-right" data-fit="Page 1, right column (farbrengen, events, birthdays, mazal tov, yahrzeits)"><div>
-        ${sponsorCard}${eventsCard}${birthdayCard}${mazalCard}${yahrzeitCard}${condolenceCard}
+      <div class="col c-left" data-fit="Page 1, left column (${names("p1-left", ["schedule"])})"><div>${schedule}${slot("p1-left")}</div></div>
+      <div class="col c-right" data-fit="Page 1, right column (${names("p1-right", ["farbrengen"])})"><div>
+        ${sponsorCard}${slot("p1-right")}
       </div></div>
     </div>
   </div>
   <div class="page p2">
     <div class="cols">
-      <div class="col c-left" data-fit="Page 2, left column (parsha, shiurim, riddle, community)"><div>
-        ${parsha}${haftorah}${calendarCard}${shiurCard}${riddleCard}${communityCard}
+      <div class="col c-left" data-fit="Page 2, left column (${names("p2-left", [])})"><div>
+        ${slot("p2-left")}
       </div></div>
       <div class="col c-right" data-fit="Page 2, right column (Jewish history)"><div>${historyCard}</div></div>
     </div>
     ${answers.length ? html`<div class="answer">Answer: ${answers.join(" · ")}</div>` : ""}
   </div>`;
+}
+
+function hasContent(v: HtmlValue): boolean {
+  return Array.isArray(v) ? v.length > 0 : v instanceof SafeHtml ? v.value !== "" : Boolean(v);
 }
 
 /** Rosh Chodesh, fasts, Mevorchim and the molad from the calendar, for a small "This Week" card. */

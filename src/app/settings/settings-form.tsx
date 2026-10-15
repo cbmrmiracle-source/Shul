@@ -1,5 +1,7 @@
 "use client";
 
+import { NewsletterLayoutFields } from "@/components/newsletter-layout-fields";
+import { resolveLayout } from "@/lib/newsletter-layout";
 import { keepFormOnSubmit } from "@/components/use-keep-form";
 import { useActionState } from "react";
 import type { Organization } from "@/db/schema";
@@ -189,6 +191,14 @@ export function SettingsForm({
         {mailchimp.configured && mailchimp.error && (
           <input type="hidden" name="mailchimpAudienceId" value={org.emailSettings.mailchimpAudienceId ?? ""} />
         )}
+      </section>
+
+      <section id="newsletter-layout" className="card scroll-mt-4 p-5">
+        <h2 className="mb-1 font-semibold text-navy">Print newsletter layout</h2>
+        <p className="mb-3 text-sm text-stone-600">
+          Where each box usually goes. You can change it for a single week from that week&apos;s outputs.
+        </p>
+        <NewsletterLayoutFields values={resolveLayout(org.newsletterLayout)} />
       </section>
 
       <section className="card p-5">

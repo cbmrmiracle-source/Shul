@@ -1,3 +1,4 @@
+import { resolveLayout, type NewsletterBlock, type NewsletterSlot } from "@/lib/newsletter-layout";
 import "server-only";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -62,6 +63,8 @@ export interface RenderData {
   shabbosEnds: string;
   /** Shiurim follow their hand-set order rather than day and time. */
   manualShiurOrder?: boolean;
+  /** Print newsletter: which page/column each box goes in (unset = defaults). */
+  newsletterLayout?: Record<NewsletterBlock, NewsletterSlot>;
   /** Approved, visible items placed in each publication, in display order. */
   items: Partial<Record<PublicationKey, RenderItem[]>>;
   /** Placed items left out because they still need review. */
@@ -184,6 +187,7 @@ export async function buildRenderData(week: Week): Promise<RenderData> {
     candleLighting: rowDisplay(schedule.friday, "candle_lighting", cal.days[0].zmanim.candleLighting, formatTime),
     shabbosEnds: rowDisplay(schedule.shabbos, "shabbos_ends", cal.days[1].zmanim.shabbosEnds, formatTime),
     manualShiurOrder: org.manualShiurOrder,
+    newsletterLayout: resolveLayout(org.newsletterLayout, week.newsletterLayout),
     items: byPub,
     pendingCount,
   };
