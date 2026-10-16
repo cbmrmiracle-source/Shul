@@ -84,7 +84,7 @@ describe("email newsletter", () => {
 
   it("builds a subject and preview line", () => {
     expect(emailSubject(data)).toBe("The Shabbos Connection – Parshas Ki Savo");
-    expect(emailPreheader(data)).toBe("Candle Lighting 7:27PM · Shabbos Ends 8:18PM");
+    expect(emailPreheader(data)).toBe("Parshas Ki Savo - Elul 16 5786 | August 29 2026");
   });
 });
 

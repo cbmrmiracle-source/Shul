@@ -99,10 +99,13 @@ export function emailSubject(d: RenderData): string {
 }
 
 /** Inbox preview line (hidden in the email body). */
+/** Preview line, e.g. "Parshas Noach - Cheshvan 6 5787 | October 17 2026". */
 export function emailPreheader(d: RenderData): string {
-  return [d.candleLighting && `Candle Lighting ${d.candleLighting}`, d.shabbosEnds && `Shabbos Ends ${d.shabbosEnds}`]
-    .filter(Boolean)
-    .join(" · ");
+  const shabbos = d.days[1];
+  const [y, m, day] = shabbos.date.split("-").map(Number);
+  const month = new Date(Date.UTC(y, m - 1, day)).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+  const { hebrew } = shabbos;
+  return `${d.titleEn} - ${hebrew.month} ${hebrew.day} ${hebrew.year} | ${month} ${day} ${y}`;
 }
 
 export function renderEmail(d: RenderData, opts: EmailOptions): string {
