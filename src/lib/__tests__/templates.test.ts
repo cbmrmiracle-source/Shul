@@ -14,9 +14,10 @@ describe("templates (HTML)", () => {
   });
 
   it("weekly WhatsApp summarizes the weekday minyanim", () => {
-    const out = buildHtml(TEMPLATES.whatsapp_weekly!, fixture());
+    const out = buildHtml(TEMPLATES.whatsapp_weekly!, fixture()).replace(/<[^>]+>/g, "");
     expect(out).toContain("Sunday - 7:00, 8:15 &amp; 9:00 am");
     expect(out).toContain("Monday-Friday - 6:30 &amp; 7:30 am");
+    expect(out).toMatch(/SHACHRIS|Shachris/);
   });
 
   it("Shabbos WhatsApp shows candle lighting, the eruv, and leaves morning rows out of Friday night", () => {
