@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+.dev.vars
+bridge/config.json
+bridge/profile/
+bridge/recordings/
+bridge/downloads/
+bridge/chrome-profile/

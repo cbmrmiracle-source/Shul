@@ -1,0 +1,24 @@
+{
+  "serverUrl": "https://commerce-mcp.YOUR-SUBDOMAIN.workers.dev",
+  "bridgeToken": "same value as the BRIDGE_TOKEN secret on the Worker",
+  "name": "home-pc",
+
+  "cdpUrl": "http://127.0.0.1:9222",
+
+  "headless": false,
+  "width": 1920,
+  "height": 1080,
+  "deviceScaleFactor": 1,
+
+  "channel": "chrome",
+  "executablePath": null,
+  "proxy": null,
+  "userAgent": null,
+  "locale": "en-US",
+  "timezoneId": null,
+  "extraArgs": [],
+
+  "profileDir": "./profile",
+  "recordingsDir": "./recordings",
+  "downloadsDir": "./downloads"
+}

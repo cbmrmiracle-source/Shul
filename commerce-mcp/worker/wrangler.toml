@@ -1,0 +1,29 @@
+name = "commerce-mcp"
+main = "src/index.ts"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Amazon SP-API region for your seller account: "na", "eu" or "fe".
+SP_REGION = "na"
+# Default marketplace when a tool call doesn't name one (ATVPDKIKX0DER = amazon.com).
+SP_MARKETPLACE_ID = "ATVPDKIKX0DER"
+# "true" sends every Amazon call to the SP-API sandbox instead of production.
+SP_SANDBOX = "false"
+
+# Secrets (set with `npx wrangler secret put NAME`, never put them here):
+#   MCP_SECRET          - long random string; the MCP URL is https://<worker>/mcp/<MCP_SECRET>
+#   BRIDGE_TOKEN        - long random string the Chrome bridge on your computer uses to connect
+#   LWA_CLIENT_ID       - from your SP-API app in Seller Central (Login with Amazon client id)
+#   LWA_CLIENT_SECRET   - matching client secret
+#   SP_REFRESH_TOKEN    - the refresh token you got when you authorized the app
+#   SP_SELLER_ID        - your Merchant Token / seller id (used by Listings APIs)
+#   CHANNELS_JSON       - optional: other sales channels / APIs (see README)
+
+[[durable_objects.bindings]]
+name = "BRIDGE_HUB"
+class_name = "BridgeHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["BridgeHub"]

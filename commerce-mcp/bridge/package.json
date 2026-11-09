@@ -1,0 +1,13 @@
+{
+  "name": "commerce-mcp-bridge",
+  "private": true,
+  "type": "module",
+  "description": "Runs on your computer: lets the commerce-mcp server drive a real Chrome.",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/agent.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "^1.56.0"
+  }
+}
