@@ -3,9 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit"
+    "bundle": "node scripts/bundle-bridge.mjs",
+    "dev": "npm run bundle && wrangler dev",
+    "deploy": "npm run bundle && wrangler deploy",
+    "typecheck": "npm run bundle && tsc --noEmit"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261109.1",

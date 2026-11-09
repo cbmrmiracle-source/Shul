@@ -2,6 +2,7 @@ import { handleMcp, type Env, type Tool } from "./mcp";
 import { amazonTools } from "./tools/amazon";
 import { channelTools } from "./tools/channels";
 import { browserTools, hubFetch } from "./tools/browser";
+import { bridgeFile, windowsInstaller, macInstaller } from "./installer";
 
 export { BridgeHub } from "./bridge-hub";
 
@@ -57,6 +58,15 @@ export default {
       }
       if (!authorizedForMcp(request, url, env)) return withCors(new Response("Unauthorized", { status: 401 }));
       return withCors(await handleMcp(request, TOOLS, env));
+    }
+
+    if (url.pathname === "/bridge/install.ps1" || url.pathname === "/bridge/install.sh" || url.pathname === "/bridge/file") {
+      const token = url.searchParams.get("token") ?? "";
+      if (!env.BRIDGE_TOKEN || env.BRIDGE_TOKEN.length < 16 || !safeEqual(token, env.BRIDGE_TOKEN)) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+      if (url.pathname === "/bridge/file") return bridgeFile(url.searchParams.get("name") ?? "");
+      return url.pathname.endsWith(".ps1") ? windowsInstaller(url.origin, token) : macInstaller(url.origin, token);
     }
 
     if (url.pathname === "/bridge/connect") {

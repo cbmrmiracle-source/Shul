@@ -7,3 +7,4 @@ bridge/recordings/
 bridge/downloads/
 bridge/chrome-profile/
 MY-SECRETS.json
+worker/src/bridge-files.ts
