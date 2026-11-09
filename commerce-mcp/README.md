@@ -30,6 +30,10 @@ The bridge on your computer connects **out** to the Worker, so you don't need to
 
 ---
 
+## Quick setup (one double-click)
+
+Install Node.js (nodejs.org, LTS), download this folder, and double-click **`SETUP.cmd`** (Mac: `setup.sh`). It installs everything and asks you to click **Allow** for Cloudflare once. Then it deploys the server, creates and stores the passwords, configures the Chrome bridge, and prints your private MCP address (also saved in `MY-SECRETS.json`). The manual steps below do the same thing by hand.
+
 ## 1. Deploy the server (Cloudflare)
 
 Needs Node 22+ and a free Cloudflare account.
