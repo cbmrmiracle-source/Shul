@@ -8,7 +8,7 @@ export async function hubFetch(env: Env, path: string, init?: RequestInit): Prom
   return stub.fetch(`https://hub${path}`, init);
 }
 
-async function callBridge(env: Env, action: string, args: Record<string, unknown>) {
+export async function callBridge(env: Env, action: string, args: Record<string, unknown>) {
   const { computer, timeoutSec, ...rest } = args;
   const res = await hubFetch(env, "/call", {
     method: "POST",

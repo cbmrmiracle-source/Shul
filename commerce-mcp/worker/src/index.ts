@@ -1,12 +1,13 @@
 import { handleMcp, type Env, type Tool } from "./mcp";
 import { amazonTools } from "./tools/amazon";
 import { channelTools } from "./tools/channels";
+import { nineyardTools } from "./tools/nineyard";
 import { browserTools, hubFetch } from "./tools/browser";
 import { bridgeFile, windowsInstaller, macInstaller } from "./installer";
 
 export { BridgeHub } from "./bridge-hub";
 
-const TOOLS = new Map<string, Tool>([...amazonTools, ...channelTools, ...browserTools].map((t) => [t.name, t]));
+const TOOLS = new Map<string, Tool>([...amazonTools, ...nineyardTools, ...channelTools, ...browserTools].map((t) => [t.name, t]));
 
 // Browser-based MCP clients (inspectors, web apps) need CORS; server-side clients ignore it.
 const CORS: Record<string, string> = {
