@@ -1,3 +1,4 @@
+import { eventDateLabel, eventDayName } from "../event-day";
 import { NEWSLETTER_BLOCKS, resolveLayout, type NewsletterBlock, type NewsletterSlot } from "@/lib/newsletter-layout";
 import { sortShiurItems } from "../shiurim";
 import type { DayInfo } from "@/lib/calendar/week";
@@ -88,10 +89,9 @@ function scheduleGroup(heading: string, rows: ScheduleRow[]): SafeHtml {
 
 const dayHeading = (d: DayInfo) => `${d.weekday}, ${d.hebrew.month} ${d.hebrew.day} — ${d.gregorianShort}`;
 
-function shortDate(civil: string | null): string {
-  if (!civil) return "";
-  const [y, m, d] = civil.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric", timeZone: "UTC" });
+function shortDate(item: RenderItem): string {
+  if (!item.eventDate) return "";
+  return eventDateLabel(item.eventDate, item.dayName || eventDayName(item.eventDate, item.eventTime, null), "short");
 }
 
 export function render(d: RenderData): SafeHtml {
@@ -147,7 +147,7 @@ export function render(d: RenderData): SafeHtml {
         "🗓️",
         "Upcoming Events",
         html`${events.map((e) => {
-          const when = [shortDate(e.eventDate), e.eventTime].filter(Boolean).join(" | ");
+          const when = [shortDate(e), e.eventTime].filter(Boolean).join(" | ");
           return html`<div class="item">
             <div class="sub">${e.title}</div>
             ${when ? html`<div>${when}${e.fields.location ? ` | ${e.fields.location}` : ""}</div>` : ""}
@@ -214,7 +214,7 @@ export function render(d: RenderData): SafeHtml {
         "📚",
         "Shiurim",
         html`${shiurim.map((s) => {
-          const when = [s.fields.day || shortDate(s.eventDate), s.eventTime].filter(Boolean).join(" | ");
+          const when = [s.fields.day || shortDate(s), s.eventTime].filter(Boolean).join(" | ");
           return html`<div class="item">
             ${when ? html`<div style="color:#d2691e">${when}</div>` : ""}
             <div class="b">${s.title}</div>

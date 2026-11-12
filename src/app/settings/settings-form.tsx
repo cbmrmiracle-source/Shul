@@ -82,7 +82,7 @@ export function SettingsForm({
         <h2 className="mb-4 font-semibold text-navy">Email newsletter</h2>
         <div className="grid gap-4 md:grid-cols-2">
           <Field
-            label="Newsletter name (for the subject line)"
+            label="Newsletter name"
             name="newsletterName"
             defaultValue={org.emailSettings.newsletterName ?? ""}
             placeholder="The Shabbos Connection"

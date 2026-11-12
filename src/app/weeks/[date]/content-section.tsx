@@ -13,7 +13,7 @@ import {
 } from "./content-actions";
 
 /** Types whose outputs follow the order set here. */
-const ORDERABLE = new Set<string>(["kids_program", "shiur"]);
+const ORDERABLE = new Set<string>(["event", "kids_program", "shiur"]);
 
 function Hidden({ name, value }: { name: string; value: string | number }) {
   return <input type="hidden" name={name} value={value} />;

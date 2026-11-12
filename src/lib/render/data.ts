@@ -1,3 +1,5 @@
+import { computeZmanim } from "@/lib/calendar/zmanim";
+import { eventDayName } from "./event-day";
 import { resolveLayout, type NewsletterBlock, type NewsletterSlot } from "@/lib/newsletter-layout";
 import "server-only";
 import { readFile } from "node:fs/promises";
@@ -42,6 +44,8 @@ export interface RenderItem {
   image: string | null;
   /** Storage key of the image, for building a public URL (email). */
   imageKey: string | null;
+  /** Day of eventDate: "Monday"…, "Shabbos" or "Motzei Shabbos". Unset in older test data. */
+  dayName?: string;
 }
 
 export interface RenderData {
@@ -137,6 +141,13 @@ export async function buildRenderData(week: Week): Promise<RenderData> {
     }
   }
 
+  // Shabbos-ends time for each Saturday an event falls on (Shabbos vs Motzei Shabbos).
+  const endsCache = new Map<string, number | null>();
+  const shabbosEndsOn = (date: string) => {
+    if (!endsCache.has(date)) endsCache.set(date, computeZmanim(date, org.zmanim).shabbosEnds);
+    return endsCache.get(date)!;
+  };
+
   const byPub: RenderData["items"] = {};
   const pendingCount: RenderData["pendingCount"] = {};
   for (const pub of pubs) {
@@ -155,6 +166,7 @@ export async function buildRenderData(week: Week): Promise<RenderData> {
           fields: i.fields,
           eventDate: i.eventDate,
           eventTime: i.eventTime || (i.type === "shiur" ? scheduleTimeFor(schedule, i.title) : ""),
+          dayName: i.eventDate ? eventDayName(i.eventDate, i.eventTime, shabbosEndsOn(i.eventDate)) : "",
           hebrewDate: i.hebrewDate,
           linkUrl: i.linkUrl,
           linkLabel: i.linkLabel,

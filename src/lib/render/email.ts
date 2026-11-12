@@ -7,6 +7,7 @@
  * the <style> block only adds mobile padding. Images must be public URLs, so
  * the caller supplies `imageUrl` to turn storage keys into links.
  */
+import { eventDateLabel, eventDayName } from "./event-day";
 import { sortShiurItems } from "./shiurim";
 import type { RenderData, RenderItem, ScheduleRow } from "./data";
 import { bidi, formatInline, formatText, html, raw, type HtmlValue, type SafeHtml } from "./html";
@@ -82,30 +83,25 @@ const isMorning = (r: ScheduleRow) => Boolean(r.value && "times" in r.value && r
 
 function longDate(item: RenderItem): string {
   if (!item.eventDate) return "";
-  const [y, m, d] = item.eventDate.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-    timeZone: "UTC",
-  });
+  return eventDateLabel(item.eventDate, item.dayName || eventDayName(item.eventDate, item.eventTime, null), "long");
 }
 
 const by = (items: RenderItem[] | undefined, type: RenderItem["type"]) => (items ?? []).filter((i) => i.type === type);
 
+/** Subject line, e.g. "Parshas Noach - Cheshvan 6 5787 | October 17 2026". */
 export function emailSubject(d: RenderData): string {
-  const name = d.org.emailSettings.newsletterName || d.org.name;
-  return `${name} – ${d.titleEn}`;
-}
-
-/** Inbox preview line (hidden in the email body). */
-/** Preview line, e.g. "Parshas Noach - Cheshvan 6 5787 | October 17 2026". */
-export function emailPreheader(d: RenderData): string {
   const shabbos = d.days[1];
   const [y, m, day] = shabbos.date.split("-").map(Number);
   const month = new Date(Date.UTC(y, m - 1, day)).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
   const { hebrew } = shabbos;
   return `${d.titleEn} - ${hebrew.month} ${hebrew.day} ${hebrew.year} | ${month} ${day} ${y}`;
+}
+
+/** Inbox preview line, e.g. "Candle Lighting 5:18PM | Shabbos Ends 6:11PM". */
+export function emailPreheader(d: RenderData): string {
+  return [d.candleLighting && `Candle Lighting ${d.candleLighting}`, d.shabbosEnds && `Shabbos Ends ${d.shabbosEnds}`]
+    .filter(Boolean)
+    .join(" | ");
 }
 
 export function renderEmail(d: RenderData, opts: EmailOptions): string {

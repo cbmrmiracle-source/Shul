@@ -39,7 +39,7 @@ export async function pushToMailchimp(_prev: MailchimpState, form: FormData): Pr
     const client = createClient();
     const result = await pushCampaign(client, {
       audienceId,
-      title: `${email.subject} (${week.shabbosDate})`,
+      title: email.subject,
       subject: email.subject,
       previewText: email.preheader,
       html: email.html,
