@@ -12,6 +12,7 @@ import {
   approveItems,
   createItem,
   deleteItem,
+  eventRepeatsUntil,
   getItem,
   itemBelongsToWeek,
   listPublications,
@@ -73,8 +74,13 @@ export async function saveItem(_prev: SaveItemResult, form: FormData): Promise<S
     const eventDate = get("eventDate").trim();
     if (eventDate && !isCivilDate(eventDate)) return { error: "Please enter a valid date" };
     const recurring = type.recurring && form.get("recurring") === "on";
-    const recurringUntil = get("recurringUntil").trim();
+    let recurringUntil = get("recurringUntil").trim();
     if (recurringUntil && !isCivilDate(recurringUntil)) return { error: "Please enter a valid end date" };
+    if (recurring && typeKey === "event") {
+      // A repeating event shows until it has passed: up to the week whose Friday is the day after it.
+      if (!eventDate) return { error: "Please enter the event's date so it stops repeating once it has passed" };
+      recurringUntil = eventRepeatsUntil(eventDate);
+    }
 
     let imageAssetId: number | null = rawId ? ((await getItem(Number(rawId)))?.imageAssetId ?? null) : null;
     if (form.get("removeImage") === "on") imageAssetId = null;

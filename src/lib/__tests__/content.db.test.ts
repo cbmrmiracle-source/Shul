@@ -72,6 +72,35 @@ describe.skipIf(!url)("content (database)", () => {
     expect((await has(w1))!.skipped).toBe(false);
   });
 
+  it("keeps a repeating event in each week until the event has passed", async () => {
+    const start = await weeks.createWeek("2026-11-07");
+    const has = async (item: { id: number }, date: string) =>
+      Boolean((await content.listWeekContent(await weeks.createWeek(date))).find((i) => i.id === item.id));
+    const event = (eventDate: string) =>
+      content.createItem(start, "event", {
+        ...blank,
+        title: `Event ${eventDate}`,
+        eventDate,
+        recurring: true,
+        recurringUntil: content.eventRepeatsUntil(eventDate),
+      });
+
+    // Wednesday Nov 18: in the issues for Shabbos Nov 14 (and before), not Nov 21.
+    const wed = await event("2026-11-18");
+    expect(await has(wed, "2026-11-07")).toBe(true);
+    expect(await has(wed, "2026-11-14")).toBe(true);
+    expect(await has(wed, "2026-11-21")).toBe(false);
+
+    // Motzei Shabbos Nov 21: still in the Nov 21 issue, gone on Nov 28.
+    const sat = await event("2026-11-21");
+    expect(await has(sat, "2026-11-21")).toBe(true);
+    expect(await has(sat, "2026-11-28")).toBe(false);
+
+    // Friday Nov 20: its own week's issue goes out that Friday, so it still shows.
+    const fri = await event("2026-11-20");
+    expect(await has(fri, "2026-11-21")).toBe(true);
+  });
+
   it("adds this week's yahrzeits from a pasted list, for review", async () => {
     const paste = [
       "Name\tHebrew Name\tDate\tRelation",

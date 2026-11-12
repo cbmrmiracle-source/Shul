@@ -111,6 +111,15 @@ async function nextSortOrder(weekId: number | null, type: ContentTypeKey): Promi
   return (last ?? 0) + 10;
 }
 
+/**
+ * Last date a repeating event keeps showing: the day after it, so it appears
+ * up to the week whose Friday falls on that day (a Friday or Shabbos event
+ * still shows in its own week, a weekday event stops the week after).
+ */
+export function eventRepeatsUntil(eventDate: string): string {
+  return addDays(eventDate, 1);
+}
+
 /** Create an item for a week (or recurring from that week), placed in the type's default publications. */
 export async function createItem(
   week: Pick<Week, "id" | "shabbosDate">,

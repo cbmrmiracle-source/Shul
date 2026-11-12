@@ -136,7 +136,7 @@ const types = {
       { name: "registrationUrl", label: "Registration link", input: "url" },
     ],
     defaultPlacements: ["email", "newsletter"],
-    recurring: false,
+    recurring: true,
     summary: (i) => join(i.eventDate, i.eventTime, i.fields.location),
   },
   mazal_tov: {

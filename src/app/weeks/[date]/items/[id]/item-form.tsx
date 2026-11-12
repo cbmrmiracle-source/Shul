@@ -214,7 +214,13 @@ export function ItemForm({
                 <input type="checkbox" name="recurring" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} />
                 Repeat every week
               </label>
-              {recurring && (
+              {recurring && typeKey === "event" && (
+                <p className="mt-2 text-xs text-stone-500">
+                  Shows in every week&apos;s outputs until the event&apos;s date has passed, then stops by itself. Edits apply to
+                  every week; use Hide to skip one week.
+                </p>
+              )}
+              {recurring && typeKey !== "event" && (
                 <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
                   until
                   <input name="recurringUntil" type="date" defaultValue={item?.recurringUntil ?? ""} className="input" />
