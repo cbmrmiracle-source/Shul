@@ -19,6 +19,12 @@ const SECRET_HEADER = /^(authorization|proxy-authorization|cookie|set-cookie|x-a
 const SKIP_BODY_TYPES = new Set(["image", "media", "font"]);
 const API_TYPES = new Set(["xhr", "fetch", "eventsource", "websocket"]);
 
+const SECRET_FIELD = /"(password|pass|pwd|secret|token|refresh_token|access_token|client_secret|otp|cvv|cardNumber)"\s*:\s*"[^"]*"/gi;
+export function maskBody(text, reveal = false) {
+  if (reveal || typeof text !== "string") return text;
+  return text.replace(SECRET_FIELD, (m, k) => `"${k}":"••••"`).replace(/(^|&)(password|pass|pwd|secret|token)=[^&]*/gi, "$1$2=••••");
+}
+
 export function mask(value) {
   const v = String(value ?? "");
   return v.length <= 8 ? "••••" : `${v.slice(0, 6)}…(${v.length} chars)`;
@@ -307,7 +313,10 @@ export class Recorder {
       domains: Object.fromEntries(Object.entries(domains).sort((a, b) => b[1].requests - a[1].requests).slice(0, 60)),
       scripts: Object.entries(scripts).sort((a, b) => b[1].bytes - a[1].bytes).slice(0, 40).map(([url, s]) => ({ url: url.slice(0, 200), file: s.file, kb: Math.round(s.bytes / 1024) })),
       websockets: Object.values(wsConns),
-      userActions: actions.slice(0, 200).map((a) => ({ type: a.type, url: a.url, key: a.key, value: a.value, target: a.target?.text || a.target?.path })),
+      userActions: actions.slice(0, 200).map((a) => {
+        const secret = /pass|secret|token|otp|cvv/i.test(`${a.target?.name ?? ""} ${a.target?.id ?? ""} ${a.target?.path ?? ""}`);
+        return { type: a.type, url: a.url, key: a.key, value: secret ? "••••" : a.value, target: secret ? a.target?.path : a.target?.text || a.target?.path };
+      }),
       tips: "browser_record_query to search requests, browser_record_get for a request's full headers/bodies or a script's source (grep for function names, endpoints, keys).",
     };
   }
@@ -363,6 +372,6 @@ export class Recorder {
       const buf = fs.readFileSync(path.join(dir, r.bodyFile));
       body = r.bodyFile.endsWith(".bin") ? `<binary ${buf.length} bytes at ${r.bodyFile}>` : cut(buf.toString("utf8"));
     }
-    return { ...r, requestHeaders: maskHeaders(r.requestHeaders, a.revealSecrets), responseHeaders: maskHeaders(r.responseHeaders, a.revealSecrets), postData: r.postData && cut(r.postData), responseBody: body };
+    return { ...r, requestHeaders: maskHeaders(r.requestHeaders, a.revealSecrets), responseHeaders: maskHeaders(r.responseHeaders, a.revealSecrets), postData: r.postData && maskBody(cut(r.postData), a.revealSecrets), responseBody: maskBody(body, a.revealSecrets) };
   }
 }

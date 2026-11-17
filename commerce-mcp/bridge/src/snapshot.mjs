@@ -62,10 +62,10 @@ export const USER_ACTION_SCRIPT = `(() => {
       path.unshift(p); e = e.parentElement;
     }
     return { tag: el.tagName.toLowerCase(), id: el.id || undefined, name: el.getAttribute('name') || undefined,
-      text: (el.innerText || el.value || el.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim().slice(0, 80) || undefined, path: path.join(' > ') };
+      text: ((el.type === 'password' || /pass|secret|token|otp|cvv|card/i.test(el.name || el.id || '')) ? (el.value ? '••••' : '') : (el.innerText || el.value || el.getAttribute('aria-label') || '')).replace(/\\s+/g, ' ').trim().slice(0, 80) || undefined, path: path.join(' > ') };
   };
   addEventListener('click', (e) => send({ type: 'click', x: e.clientX, y: e.clientY, target: describe(e.target) }), true);
-  addEventListener('change', (e) => { const t = e.target; send({ type: 'change', target: describe(t), value: t.type === 'password' ? '••••' : String(t.value ?? '').slice(0, 200) }); }, true);
+  addEventListener('change', (e) => { const t = e.target; const secret = t.type === 'password' || /pass|secret|token|otp|cvv|card/i.test(t.name || t.id || ''); send({ type: 'change', target: describe(t), value: secret ? '••••' : String(t.value ?? '').slice(0, 200) }); }, true);
   addEventListener('submit', (e) => send({ type: 'submit', target: describe(e.target), action: e.target.action }), true);
   addEventListener('keydown', (e) => { if (['Enter', 'Escape', 'Tab'].includes(e.key)) send({ type: 'key', key: e.key, target: describe(e.target) }); }, true);
 })();`;
