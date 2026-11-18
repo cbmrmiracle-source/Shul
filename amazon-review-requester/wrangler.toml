@@ -1,0 +1,21 @@
+name = "review-requester"
+main = "src/index.js"
+compatibility_date = "2025-09-01"
+workers_dev = true
+
+[triggers]
+crons = ["*/5 * * * *"]
+
+[[durable_objects.bindings]]
+name = "STORE"
+class_name = "Store"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Store"]
+
+# Optional: lets this Worker reuse the Amazon login already stored in your
+# commerce-mcp Worker (then only COMMERCE_MCP_SECRET is needed).
+[[services]]
+binding = "COMMERCE"
+service = "commerce-mcp"
