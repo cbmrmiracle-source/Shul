@@ -143,7 +143,11 @@ const defs: Def[] = [
   }],
   ["browser_record_stop", "Stops recording, saves page HTML snapshots, and returns an analysis: API endpoints grouped by pattern, auth mechanism, GraphQL operations, third-party domains, scripts, WebSockets, user actions.", { session: s.str("Session name (default the active one)") }],
   ["browser_record_list", "Lists saved recording sessions.", {}, [], true],
-  ["browser_record_analyze", "Re-analyzes a saved session: endpoint map, auth, data flows.", { session: s.str("Session name"), revealSecrets: s.bool("Show token/cookie values") }, ["session"], true],
+  ["browser_record_analyze", "Re-analyzes a saved session: the site's own API calls (method, path, count, body fields), and the user's clicks/typing in order. Use part='actions' or part='endpoints' for long sessions, with offset to page.", {
+    session: s.str("Session name"), revealSecrets: s.bool("Show token/cookie values"),
+    part: s.enum(["overview", "endpoints", "actions", "full"], "What to return (default overview = summary + endpoints + first actions)"),
+    offset: s.int("For part=actions/endpoints: skip this many entries"), limit: s.int("Entries per page (default 150)"),
+  }, ["session"], true],
   ["browser_record_query", "Searches requests inside a recording session.", {
     session: s.str("Session name"), urlContains: s.str("URL substring"), method: s.str("Method"), resourceType: s.str("Type"), status: s.int("HTTP status"),
     bodyContains: s.str("Text inside request or response body"), limit: s.int("Default 50"), offset: s.int("Skip"),
@@ -167,9 +171,18 @@ export const browserTools: Tool[] = defs.map(([name, description, props, require
     required,
   ),
   annotations: readOnly ? { readOnlyHint: true } : { openWorldHint: true },
-  run: (args: any, env: Env) => {
+  run: async (args: any, env: Env) => {
     if (name === "browser_status") return browserStatus(env, args);
-    return callBridge(env, name.replace(/^browser_/, ""), args);
+    const out = await callBridge(env, name.replace(/^browser_/, ""), args);
+    if (name === "browser_record_stop" || name === "browser_record_analyze") {
+      const c: any = compactAnalysis(out, args.part === "full");
+      if (args.part === "full" || !c?.actions) return c;
+      const off = Number(args.offset ?? 0), lim = Number(args.limit ?? 150);
+      if (args.part === "actions") return { session: c.session, totalActions: c.actions.length, offset: off, actions: c.actions.slice(off, off + lim) };
+      if (args.part === "endpoints") return { session: c.session, site: c.site, totalEndpoints: c.endpoints.length, offset: off, endpoints: c.endpoints.slice(off, off + lim) };
+      return { ...c, actions: c.actions.slice(0, 60), moreActions: Math.max(0, c.actions.length - 60) };
+    }
+    return out;
   },
 }));
 
@@ -186,4 +199,30 @@ async function browserStatus(env: Env, args: any) {
     browser = { error: (e as Error).message };
   }
   return { computers: hub.computers, browser };
+}
+
+// Recording analyses can be huge (third-party trackers, websocket frames). Keep
+// what matters for learning a site: its own API calls and the user's actions.
+function compactAnalysis(a: any, full?: boolean): unknown {
+  if (!a || typeof a !== "object" || full) return a;
+  const first = a.summary?.firstParty as string | undefined;
+  const eps = Object.entries(a.endpoints ?? {}) as [string, any][];
+  const host = (k: string) => k.split(" ")[1]?.split("/")[0] ?? "";
+  // Real first party = the host with the most API endpoints.
+  const counts: Record<string, number> = {};
+  for (const [k] of eps) counts[host(k)] = (counts[host(k)] ?? 0) + 1;
+  const main = Object.entries(counts).sort((x, y) => y[1] - x[1])[0]?.[0] ?? first;
+  const endpoints = eps.filter(([k]) => host(k) === main && !/\/(tunnel|collect|rec\/bundle|ingest)\b/.test(k)).map(([k, v]) =>
+    `${String(v.calls).padStart(3)}x ${k.replace(main, "")} [${(v.statuses ?? []).join(",")}]` +
+    (v.queryKeys?.length ? ` q=${v.queryKeys.join(",")}` : "") +
+    (v.requestBodyKeys?.length ? ` body=${v.requestBodyKeys.filter((b: string) => b.length < 40).slice(0, 12).join(",")}` : "") + ` e.g. ${v.sampleIds?.[0] ?? ""}`);
+  const actions = (a.userActions ?? []).map((u: any) =>
+    `${u.type}${u.target ? ` "${String(u.target).slice(0, 70)}"` : ""}${u.value !== undefined && u.value !== null ? ` = ${String(u.value).slice(0, 60)}` : ""}${u.key ? ` [${u.key}]` : ""} @ ${String(u.url ?? "").replace(/^https?:\/\/[^/]+/, "")}`);
+  return {
+    session: a.session, folder: a.folder, summary: a.summary, site: main,
+    otherDomains: Object.keys(a.domains ?? {}).filter((d) => d !== main).length,
+    auth: Object.keys(a.auth?.headers ?? {}),
+    endpoints, actions,
+    tip: "browser_record_get {session, requestId} for a request's full body; browser_record_analyze {session, part:'actions', offset} to page long click logs.",
+  };
 }
