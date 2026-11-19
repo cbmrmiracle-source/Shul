@@ -353,6 +353,6 @@ async function loadInsights(){const j=await api('/api/insights'),t=j.totals||{};
       <div class="grid g2" style="margin-top:6px"><div><div class="small" style="font-weight:600;color:var(--good)">Customers like</div>\${list(d.pos,'t-sent')}</div><div><div class="small" style="font-weight:600;color:var(--bad)">Customers dislike</div>\${list(d.neg,'t-failed')}</div></div></div>\`}).join(''):'<div class="muted small">Snapshots start once products are selected (up to 3 ASINs per run, refreshed weekly).</div>'}
 
 let start='overview';try{start=localStorage.getItem('rr-tab')||'overview'}catch(e){}
-load().then(()=>show(start));setInterval(()=>{if(!document.hidden)load()},60000);
+load().then(()=>show(start));setInterval(()=>{if(!document.hidden)load()},300000);
 </script></body></html>`;
 }

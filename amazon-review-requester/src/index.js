@@ -9,7 +9,8 @@ const HOUR = 3600000;
 const MARKETPLACE = "ATVPDKIKX0DER";
 const SEND_BATCH = 40;          // requests per tick (fits the 50-subrequest limit)
 const INGEST_EVERY = HOUR;      // how often to pull a fresh order report
-const BACKFILL_DAYS = 30;       // first sync looks back this far
+const BACKFILL_DAYS = 3;        // never sync orders older than this (keeps the free plan's daily limits)
+const START_FROM = "2026-11-17"; // first day of orders that get review requests (set once, editable in Settings)
 const MAX_ORDER_AGE_DAYS = 35;  // Amazon only allows requests within ~30 days of delivery
 const FEEDBACK_EVERY = 7 * DAY;
 // Cloudflare Free plan: 100k SQLite rows written and 5M rows read per day (account-wide).
@@ -155,11 +156,11 @@ export class Store {
       if (p === "/api/dev/import" && this.env.DEV_MODE === "1") { const n = this.importOrders(await request.text()); this.plan(false); return json(n); }
       if (p === "/tick") { await this.tick("schedule"); return json({ ok: true }); }
       if (p === "/api/state") {
-        if (!this.viewCache || Date.now() - this.viewCache.at > 2 * 60000) this.viewCache = { at: Date.now(), v: this.stateView() };
+        if (!this.viewCache || (Date.now() - this.viewCache.at > 10 * 60000 && !this.overBudget())) this.viewCache = { at: Date.now(), v: this.stateView() };
         return json({ ...this.viewCache.v, usage: this.todayUsage(), paidPlan: this.env.PAID_PLAN === "1", limitMessage: this.overBudget() ? LIMIT_MSG : null });
       }
       if (p === "/api/insights") {
-        if (!this.insightsCache || Date.now() - this.insightsCache.at > 15 * 60000) this.insightsCache = { at: Date.now(), v: this.insightsView() };
+        if (!this.insightsCache || (Date.now() - this.insightsCache.at > 30 * 60000 && !this.overBudget())) this.insightsCache = { at: Date.now(), v: this.insightsView() };
         return json(this.insightsCache.v);
       }
       if (p === "/api/requests") return json(this.requestsView(url.searchParams));
@@ -216,6 +217,13 @@ export class Store {
     try {
       this.set("lastTick", Date.now());
       if (this.overBudget()) { this.set("lastError", LIMIT_MSG); return; }
+      if (!this.get("startFromApplied")) {
+        const st = this.settings();
+        st.startDate = START_FROM;
+        this.set("settings", st);
+        this.set("startFromApplied", true);
+        this.log("info", `Review requests start with orders placed on or after ${START_FROM}.`);
+      }
       this.set("lastError", null);
       if (!this.credentialMode()) {
         this.set("lastError", "Amazon credentials are not configured yet.");
@@ -270,7 +278,7 @@ export class Store {
     const through = this.get("syncedThrough");
     const catchingUp = through && Date.now() - Date.parse(through) > 3 * HOUR; // first sync runs in 5-day chunks
     if (!force && !catchingUp && last && Date.now() - last.at < INGEST_EVERY) return;
-    const since = through ? new Date(Date.parse(through) - 2 * HOUR) : new Date(Date.now() - BACKFILL_DAYS * DAY);
+    const since = new Date(Math.max(through ? Date.parse(through) - 2 * HOUR : 0, Date.now() - BACKFILL_DAYS * DAY));
     const until = new Date(Math.min(Date.now() - 5 * 60000, since.getTime() + 5 * DAY));
     const r = await this.sp("POST", "/reports/2021-06-30/reports", null, {
       reportType: "GET_FLAT_FILE_ALL_ORDERS_DATA_BY_LAST_UPDATE_GENERAL",
