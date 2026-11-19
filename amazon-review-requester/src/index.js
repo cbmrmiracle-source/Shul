@@ -12,6 +12,11 @@ const INGEST_EVERY = HOUR;      // how often to pull a fresh order report
 const BACKFILL_DAYS = 30;       // first sync looks back this far
 const MAX_ORDER_AGE_DAYS = 35;  // Amazon only allows requests within ~30 days of delivery
 const FEEDBACK_EVERY = 7 * DAY;
+// Cloudflare Free plan: 100k SQLite rows written and 5M rows read per day (account-wide).
+// The app stops heavy work below these limits so the dashboard keeps working.
+const FREE_WRITE_BUDGET = 80000;
+const FREE_READ_BUDGET = 4000000;
+const LIMIT_MSG = "Cloudflare's free-plan daily database limit was reached. Everything resumes automatically at 00:00 UTC, or right away on the Workers Paid plan.";
 
 const DEFAULT_SETTINGS = {
   active: true,
@@ -51,7 +56,10 @@ export default {
     }
 
     if (url.pathname === "/") return html(renderApp());
-    if (url.pathname.startsWith("/api/")) return stub(env).fetch(request);
+    if (url.pathname.startsWith("/api/")) {
+      try { return await stub(env).fetch(request); }
+      catch (e) { return json({ error: isLimitError(e) ? LIMIT_MSG : `The app's storage is not responding: ${e.message}` }, 503); }
+    }
     return new Response("Not found", { status: 404 });
   },
 
@@ -72,6 +80,9 @@ export class Store {
     this.sql = state.storage.sql;
     this.token = null;
     this.ticking = false;
+    this.usage = null;
+    this.viewCache = null;
+    this.insightsCache = null;
     this.migrate();
   }
 
@@ -104,14 +115,36 @@ export class Store {
   }
 
   // ---- small helpers
-  all(q, ...a) { return this.sql.exec(q, ...a).toArray(); }
+  run(q, ...a) {
+    const c = this.sql.exec(q, ...a);
+    const rows = c.toArray();
+    const u = this.todayUsage();
+    u.r += c.rowsRead || 0; u.w += c.rowsWritten || 0;
+    return rows;
+  }
+  todayUsage() {
+    const day = new Date().toISOString().slice(0, 10);
+    if (!this.usage) { const r = this.sql.exec("SELECT v FROM kv WHERE k='usage'").toArray()[0]; this.usage = r ? JSON.parse(r.v) : { day, r: 0, w: 0 }; }
+    if (this.usage.day !== day) this.usage = { day, r: 0, w: 0 };
+    return this.usage;
+  }
+  saveUsage() { try { this.sql.exec("INSERT INTO kv(k,v) VALUES('usage',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", JSON.stringify(this.todayUsage())); } catch {} }
+  overBudget() {
+    if (this.env.PAID_PLAN === "1") return false;
+    const u = this.todayUsage();
+    return u.w > FREE_WRITE_BUDGET || u.r > FREE_READ_BUDGET;
+  }
+  invalidate() { this.viewCache = null; this.insightsCache = null; }
+  all(q, ...a) { return this.run(q, ...a); }
   one(q, ...a) { return this.all(q, ...a)[0]; }
   get(k, d = null) { const r = this.one("SELECT v FROM kv WHERE k=?", k); return r ? JSON.parse(r.v) : d; }
-  set(k, v) { this.sql.exec("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", k, JSON.stringify(v)); }
+  set(k, v) { this.run("INSERT INTO kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", k, JSON.stringify(v)); }
   settings() { return { ...DEFAULT_SETTINGS, ...this.get("settings", {}) }; }
   log(level, msg) {
-    this.sql.exec("INSERT INTO events(ts,level,msg) VALUES(?,?,?)", Date.now(), level, String(msg).slice(0, 500));
-    this.sql.exec("DELETE FROM events WHERE id < (SELECT MAX(id) - 500 FROM events)");
+    try {
+      this.run("INSERT INTO events(ts,level,msg) VALUES(?,?,?)", Date.now(), level, String(msg).slice(0, 500));
+      if (Math.random() < 0.05) this.run("DELETE FROM events WHERE id < (SELECT MAX(id) - 500 FROM events)");
+    } catch {}
   }
 
   // ---- HTTP API
@@ -119,10 +152,16 @@ export class Store {
     const url = new URL(request.url);
     const p = url.pathname;
     try {
-      if (p === "/api/dev/import" && this.env.DEV_MODE === "1") { const n = this.importOrders(await request.text()); this.plan(); return json(n); }
+      if (p === "/api/dev/import" && this.env.DEV_MODE === "1") { const n = this.importOrders(await request.text()); this.plan(false); return json(n); }
       if (p === "/tick") { await this.tick("schedule"); return json({ ok: true }); }
-      if (p === "/api/state") return json(this.stateView());
-      if (p === "/api/insights") return json(this.insightsView());
+      if (p === "/api/state") {
+        if (!this.viewCache || Date.now() - this.viewCache.at > 2 * 60000) this.viewCache = { at: Date.now(), v: this.stateView() };
+        return json({ ...this.viewCache.v, usage: this.todayUsage(), paidPlan: this.env.PAID_PLAN === "1", limitMessage: this.overBudget() ? LIMIT_MSG : null });
+      }
+      if (p === "/api/insights") {
+        if (!this.insightsCache || Date.now() - this.insightsCache.at > 15 * 60000) this.insightsCache = { at: Date.now(), v: this.insightsView() };
+        return json(this.insightsCache.v);
+      }
       if (p === "/api/requests") return json(this.requestsView(url.searchParams));
       if (p === "/api/export.csv") return this.exportCsv();
       if (p === "/api/run" && request.method === "POST") {
@@ -137,8 +176,9 @@ export class Store {
         if (typeof b.skipBusiness === "boolean") s.skipBusiness = b.skipBusiness;
         if (b.startDate !== undefined) s.startDate = b.startDate || null;
         this.set("settings", s);
+        this.invalidate();
         this.log("info", `Settings saved: ${s.active ? "active" : "paused"}, ${s.delayDays} days after purchase${s.skipBusiness ? ", skipping business orders" : ""}${s.startDate ? `, orders since ${s.startDate}` : ""}`);
-        this.plan();
+        this.plan(true);
         return json({ ok: true, settings: s });
       }
       if (p === "/api/products" && request.method === "POST") {
@@ -147,21 +187,25 @@ export class Store {
         if (!asins.length) return json({ error: "No valid ASINs" }, 400);
         const now = Date.now();
         for (const a of asins) {
-          this.sql.exec("INSERT INTO products(asin, first_seen) VALUES(?,?) ON CONFLICT(asin) DO NOTHING", a, now);
-          if (typeof b.enabled === "boolean") this.sql.exec("UPDATE products SET enabled=? WHERE asin=?", b.enabled ? 1 : 0, a);
+          this.run("INSERT INTO products(asin, first_seen) VALUES(?,?) ON CONFLICT(asin) DO NOTHING", a, now);
+          if (typeof b.enabled === "boolean") this.run("UPDATE products SET enabled=? WHERE asin=? AND enabled<>?", b.enabled ? 1 : 0, a, b.enabled ? 1 : 0);
           if (b.delayOverride !== undefined) {
             const d = b.delayOverride === null || b.delayOverride === "" ? null : clampDelay(b.delayOverride);
-            this.sql.exec("UPDATE products SET delay_override=? WHERE asin=?", d, a);
+            this.run("UPDATE products SET delay_override=? WHERE asin=? AND delay_override IS NOT ?", d, a, d);
           }
         }
+        this.invalidate();
         if (typeof b.enabled === "boolean") this.log("info", `${b.enabled ? "Enabled" : "Disabled"} review requests for ${asins.length} ASIN${asins.length > 1 ? "s" : ""}`);
-        this.plan();
+        this.plan(true);
         return json({ ok: true });
       }
       return json({ error: "Not found" }, 404);
     } catch (e) {
+      if (isLimitError(e)) return json({ error: LIMIT_MSG }, 503);
       this.log("error", `API ${p}: ${e.message}`);
       return json({ error: e.message }, 500);
+    } finally {
+      this.saveUsage();
     }
   }
 
@@ -169,19 +213,28 @@ export class Store {
   async tick(kind) {
     if (this.ticking) return;
     this.ticking = true;
-    this.set("lastTick", Date.now());
-    this.set("lastError", null);
     try {
+      this.set("lastTick", Date.now());
+      if (this.overBudget()) { this.set("lastError", LIMIT_MSG); return; }
+      this.set("lastError", null);
       if (!this.credentialMode()) {
         this.set("lastError", "Amazon credentials are not configured yet.");
         return;
       }
-      const steps = [["sync orders", () => this.ingest(kind === "manual")], ["plan", () => { if (this.get("planDirty")) this.plan(); }], ["send", () => this.sendDue()], ["customer feedback", () => this.snapshotFeedback()]];
+      const steps = [["sync orders", () => this.ingest(kind === "manual")], ["plan", () => { if (this.get("planDirty")) this.plan(false); }], ["send", () => this.sendDue()], ["customer feedback", () => this.snapshotFeedback()]];
       for (const [name, fn] of steps) {
-        try { await fn(); } catch (e) { this.log("error", `${name}: ${e.message}`); this.set("lastError", `${name}: ${e.message}`); }
+        if (this.overBudget()) { this.set("lastError", LIMIT_MSG); break; }
+        try { await fn(); } catch (e) {
+          if (isLimitError(e)) break;
+          this.log("error", `${name}: ${e.message}`); this.set("lastError", `${name}: ${e.message}`);
+        }
       }
+      this.invalidate();
+    } catch (e) {
+      if (!isLimitError(e)) throw e;
     } finally {
       this.ticking = false;
+      this.saveUsage();
     }
   }
 
@@ -210,7 +263,7 @@ export class Store {
       this.set("lastIngest", { at: Date.now(), since: pending.since, rows: n });
       this.set("syncedThrough", pending.until);
       this.set("planDirty", true);
-      this.log("info", `Synced ${n.orders} orders (${n.rows} lines) from Amazon`);
+      this.log("info", `Synced ${n.orders} orders from Amazon (${n.inserted} new, ${n.updated} updated)`);
       return;
     }
     const last = this.get("lastIngest");
@@ -263,38 +316,68 @@ export class Store {
       const prev = o.items.get(asin);
       if (prev) { prev.qty += qty; prev.price += price; } else o.items.set(asin, { sku: f[C.sku], title: f[C.title], qty, price, cancelled: /cancel/i.test(f[C.itemStatus] ?? "") });
     }
+    const products = new Map();
+    let inserted = 0, updated = 0;
     this.state.storage.transactionSync(() => {
       for (const o of orders.values()) {
         let units = 0, total = 0;
         for (const it of o.items.values()) { units += it.qty; total += it.price; }
-        this.sql.exec(
-          `INSERT INTO orders(order_id,purchase_ms,updated_ms,status,channel,is_business,ship_state,ship_country,units,total,currency)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(order_id) DO UPDATE SET updated_ms=excluded.updated_ms, status=excluded.status,
-           units=excluded.units, total=excluded.total, ship_state=excluded.ship_state, ship_country=excluded.ship_country, is_business=excluded.is_business`,
-          o.id, o.purchase, o.updated, o.status, o.channel, o.business, o.state, o.country, units, round2(total), o.currency);
         for (const [asin, it] of o.items) {
-          this.sql.exec("INSERT INTO order_items(order_id,asin,sku,qty,price) VALUES(?,?,?,?,?) ON CONFLICT DO UPDATE SET qty=excluded.qty, price=excluded.price, sku=excluded.sku", o.id, asin, it.sku, it.qty, round2(it.price));
-          this.sql.exec(
-            `INSERT INTO products(asin,sku,title,first_seen,last_order) VALUES(?,?,?,?,?)
-             ON CONFLICT(asin) DO UPDATE SET sku=COALESCE(products.sku, excluded.sku), title=COALESCE(excluded.title, products.title), last_order=MAX(COALESCE(products.last_order,0), excluded.last_order)`,
-            asin, it.sku, it.title || null, Date.now(), o.purchase);
+          const p = products.get(asin);
+          if (!p) products.set(asin, { sku: it.sku, title: it.title || null, last: o.purchase });
+          else if (o.purchase > p.last) p.last = o.purchase;
         }
-        // a cancelled order never gets a request
-        if (/cancel/i.test(o.status)) this.sql.exec("UPDATE requests SET status='skipped', last_error='Order cancelled', updated_at=? WHERE order_id=? AND status='scheduled'", Date.now(), o.id);
+        const prev = this.one("SELECT status, updated_ms FROM orders WHERE order_id=?", o.id);
+        if (!prev) {
+          this.run(
+            `INSERT INTO orders(order_id,purchase_ms,updated_ms,status,channel,is_business,ship_state,ship_country,units,total,currency)
+             VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+            o.id, o.purchase, o.updated, o.status, o.channel, o.business, o.state, o.country, units, round2(total), o.currency);
+          for (const [asin, it] of o.items) this.run("INSERT OR IGNORE INTO order_items(order_id,asin,sku,qty,price) VALUES(?,?,?,?,?)", o.id, asin, it.sku, it.qty, round2(it.price));
+          inserted++;
+        } else if (prev.status !== o.status || prev.updated_ms !== o.updated) {
+          // only the order row changes after the first import (status, totals); items stay as they were
+          this.run("UPDATE orders SET status=?, updated_ms=?, units=?, total=?, ship_state=COALESCE(?, ship_state) WHERE order_id=?", o.status, o.updated, units, round2(total), o.state, o.id);
+          updated++;
+          // a cancelled order never gets a request
+          if (/cancel/i.test(o.status)) this.run("UPDATE requests SET status='skipped', last_error='Order cancelled', updated_at=? WHERE order_id=? AND status IN ('scheduled','retry')", Date.now(), o.id);
+        }
+      }
+      // one write per product per sync, and none when nothing changed
+      for (const [asin, p] of products) {
+        this.run(
+          `INSERT INTO products(asin,sku,title,first_seen,last_order) VALUES(?,?,?,?,?)
+           ON CONFLICT(asin) DO UPDATE SET sku=COALESCE(products.sku, excluded.sku), title=COALESCE(excluded.title, products.title),
+             last_order=MAX(COALESCE(products.last_order,0), excluded.last_order)
+           WHERE products.last_order IS NULL OR excluded.last_order > products.last_order OR products.title IS NULL`,
+          asin, p.sku, p.title, Date.now(), p.last);
       }
     });
-    return { orders: orders.size, rows };
+    return { orders: orders.size, rows, inserted, updated };
   }
 
   // ---- 2. decide which orders get a request, and when
-  plan() {
+  // full=false after an order sync: only adds requests for new orders.
+  // full=true after settings or product changes: also drops requests that no longer
+  // qualify and moves send dates whose delay changed. Rows are only written when they change.
+  plan(full = false) {
     const s = this.settings();
     const now = Date.now();
     this.set("planDirty", false);
     const start = Math.max(s.startDate ? Date.parse(s.startDate) : 0, now - MAX_ORDER_AGE_DAYS * DAY);
+    const skipBiz = s.skipBusiness ? 1 : 0;
+    const eligible = `SELECT o.order_id FROM orders o JOIN order_items i ON i.order_id=o.order_id JOIN products p ON p.asin=i.asin AND p.enabled=1
+                      WHERE o.status NOT LIKE '%ancel%' AND o.purchase_ms >= ?1 AND (?2 = 0 OR o.is_business = 0)`;
     this.state.storage.transactionSync(() => {
-      this.sql.exec("DELETE FROM requests WHERE status='scheduled'");
-      this.sql.exec(
+      if (full) {
+        this.run(`DELETE FROM requests WHERE status IN ('scheduled','retry') AND order_id NOT IN (${eligible})`, start, skipBiz);
+        const delayOf = `(SELECT MIN(COALESCE(p.delay_override, ?1)) FROM order_items i JOIN products p ON p.asin=i.asin AND p.enabled=1 WHERE i.order_id=requests.order_id)`;
+        this.run(`UPDATE requests SET delay_days=${delayOf}, due_at=purchase_ms + ${delayOf} * 86400000, updated_at=?2
+                  WHERE status='scheduled' AND delay_days IS NOT ${delayOf}`, s.delayDays, now);
+        this.run(`UPDATE requests SET asin=(SELECT MIN(p.asin) FROM order_items i JOIN products p ON p.asin=i.asin AND p.enabled=1 WHERE i.order_id=requests.order_id)
+                  WHERE status IN ('scheduled','retry') AND asin NOT IN (SELECT asin FROM products WHERE enabled=1)`);
+      }
+      this.run(
         `INSERT INTO requests(order_id, asin, purchase_ms, due_at, delay_days, status, attempts, updated_at)
          SELECT o.order_id, MIN(p.asin), o.purchase_ms,
                 o.purchase_ms + MIN(COALESCE(p.delay_override, ?1)) * 86400000,
@@ -303,13 +386,9 @@ export class Store {
          JOIN order_items i ON i.order_id = o.order_id
          JOIN products p ON p.asin = i.asin AND p.enabled = 1
          WHERE o.status NOT LIKE '%ancel%' AND o.purchase_ms >= ?3 AND (?4 = 0 OR o.is_business = 0)
-           AND o.order_id NOT IN (SELECT order_id FROM requests)
+           AND NOT EXISTS (SELECT 1 FROM requests r WHERE r.order_id = o.order_id)
          GROUP BY o.order_id`,
-        s.delayDays, now, start, s.skipBusiness ? 1 : 0);
-      // retries keep their back-off, but stop if none of the order's ASINs are selected anymore
-      this.sql.exec(
-        `DELETE FROM requests WHERE status='retry' AND order_id NOT IN (
-           SELECT i.order_id FROM order_items i JOIN products p ON p.asin=i.asin AND p.enabled=1)`);
+        s.delayDays, now, start, skipBiz);
     });
   }
 
@@ -328,7 +407,7 @@ export class Store {
       if (!/^shipped/i.test(r.status)) { this.retryLater(r, 12 * HOUR, `Order status is ${r.status}`); continue; }
       const res = await this.sp("POST", `/solicitations/v1/orders/${r.order_id}/solicitations/productReviewAndSellerFeedback`, { marketplaceIds: MARKETPLACE });
       if (res.status === 201 || res.status === 200) {
-        this.sql.exec("UPDATE requests SET status='sent', sent_at=?, attempts=attempts+1, last_error=NULL, updated_at=? WHERE order_id=?", now, now, r.order_id);
+        this.run("UPDATE requests SET status='sent', sent_at=?, attempts=attempts+1, last_error=NULL, updated_at=? WHERE order_id=?", now, now, r.order_id);
         sent++;
       } else if (res.status === 429) {
         this.log("warn", "Amazon rate limit reached; continuing next run.");
@@ -348,10 +427,10 @@ export class Store {
   }
 
   retryLater(r, ms, err) {
-    this.sql.exec("UPDATE requests SET status='retry', attempts=attempts+1, due_at=?, last_error=?, updated_at=? WHERE order_id=?", Date.now() + ms, err, Date.now(), r.order_id);
+    this.run("UPDATE requests SET status='retry', attempts=attempts+1, due_at=?, last_error=?, updated_at=? WHERE order_id=?", Date.now() + ms, err, Date.now(), r.order_id);
   }
   mark(id, status, err) {
-    this.sql.exec("UPDATE requests SET status=?, attempts=attempts+1, last_error=?, updated_at=? WHERE order_id=?", status, err, Date.now(), id);
+    this.run("UPDATE requests SET status=?, attempts=attempts+1, last_error=?, updated_at=? WHERE order_id=?", status, err, Date.now(), id);
   }
 
   // ---- 4. customer feedback snapshots (brand-registered ASINs)
@@ -363,7 +442,7 @@ export class Store {
     for (const { asin } of todo) {
       const r = await this.sp("GET", `/customerFeedback/2024-06-01/items/${asin}/reviews/topics`, { marketplaceId: MARKETPLACE, sortBy: "MENTIONS" });
       if (r.status !== 200) {
-        this.sql.exec("INSERT OR REPLACE INTO feedback(asin,taken_at,ok,pos_mentions,neg_mentions,data) VALUES(?,?,0,0,0,?)", asin, now, JSON.stringify({ error: errText(r) }));
+        this.run("INSERT OR REPLACE INTO feedback(asin,taken_at,ok,pos_mentions,neg_mentions,data) VALUES(?,?,0,0,0,?)", asin, now, JSON.stringify({ error: errText(r) }));
         continue;
       }
       const t = r.body.topics ?? {};
@@ -373,7 +452,7 @@ export class Store {
       }));
       const pos = pick(t.positiveTopics), neg = pick(t.negativeTopics);
       const sum = (a) => a.reduce((n, x) => n + (x.mentions || 0), 0);
-      this.sql.exec("INSERT OR REPLACE INTO feedback(asin,taken_at,ok,pos_mentions,neg_mentions,data) VALUES(?,?,1,?,?,?)",
+      this.run("INSERT OR REPLACE INTO feedback(asin,taken_at,ok,pos_mentions,neg_mentions,data) VALUES(?,?,1,?,?,?)",
         asin, now, sum(pos), sum(neg), JSON.stringify({ pos, neg, range: r.body.dateRange }));
       await sleep(1100);
     }
@@ -515,6 +594,7 @@ export class Store {
 }
 
 // ---------------------------------------------------------------- utils
+function isLimitError(e) { return /exceeded allowed|free tier|rows (read|written)|daily limit|storage limit/i.test(String(e?.message ?? e)); }
 function json(v, status = 200) { return new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } }); }
 function html(v, status = 200) {
   return new Response(v, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-frame-options": "DENY", "referrer-policy": "no-referrer" } });

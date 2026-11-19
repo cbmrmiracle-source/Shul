@@ -264,7 +264,7 @@ function hbars(el,rows,{label=r=>r.label,value=r=>r.n,total}={}){if(!rows.length
   const max=Math.max(...rows.map(value));el.innerHTML=rows.map(r=>\`<div class="hbar"><div class="ptitle" title="\${esc(label(r))}">\${esc(label(r))}</div><div class="track"><div class="fill" style="width:\${value(r)/max*100}%"></div></div><div class="n">\${total?pct(value(r),total):fmt(value(r))}</div></div>\`).join('')}
 
 // ---------- state
-async function load(){S=await api('/api/state');render()}
+async function load(){try{S=await api('/api/state');render()}catch(e){const n=$('#setup-note');n.innerHTML='<b>The app is not responding right now.</b> '+esc(e.message);n.classList.remove('hidden');const pill=$('#pill');pill.className='status-pill err';pill.lastElementChild.textContent='Paused';}}
 function render(){
   const s=S.settings,c=S.counts;
   const pill=$('#pill');
@@ -276,7 +276,8 @@ function render(){
   if(!S.credentials)msgs.push('<b>Connect Amazon:</b> add the Amazon credentials as Worker secrets (see the README). Until then nothing is synced or sent.');
   if(S.credentials&&!S.ordersStored)msgs.push('<b>First sync in progress.</b> Amazon is preparing a 30-day order report; products will appear within ~15–30 minutes.');
   if(S.ordersStored&&!enabled)msgs.push('<b>No products selected yet.</b> Go to <a href="#" onclick="show(\\'products\\');return false">Products</a> and enable the ASINs you want to request reviews for.');
-  if(S.lastError)msgs.push('<b>Last run had a problem:</b> '+esc(S.lastError));
+  if(S.limitMessage)msgs.push('<b>Paused for today.</b> '+esc(S.limitMessage));
+  else if(S.lastError)msgs.push('<b>Last run had a problem:</b> '+esc(S.lastError));
   note.innerHTML=msgs.join('<br>');note.classList.toggle('hidden',!msgs.length);
   $('#ov-sub').textContent=enabled?\`Sending Amazon's "Request a Review" \${s.delayDays} days after purchase for \${enabled} selected product\${enabled>1?'s':''}.\`:'Automatic Amazon "Request a Review" for the products you select.';
   const sentAll=c.sent||0,rej=(c.ineligible||0)+(c.expired||0)+(c.already||0);
@@ -292,7 +293,7 @@ function render(){
   bars($('#ch-upcoming'),up,[toArr(S.series.upcoming,14)],{names:['Scheduled']});
   hbars($('#ov-products'),S.products.filter(p=>p.enabled).slice(0,8),{label:p=>p.title||p.asin,value:p=>p.orders30});
   if(!enabled)$('#ov-products').innerHTML='<div class="muted small">No products selected yet.</div>';
-  $('#sync-info').textContent=(S.lastIngest?'Orders synced '+dtime(S.lastIngest.at):'Orders not synced yet')+(S.pendingReport?' · report in progress':'')+' · '+fmt(S.ordersStored)+' orders stored · last run '+dtime(S.lastTick);
+  $('#sync-info').textContent=(S.lastIngest?'Orders synced '+dtime(S.lastIngest.at):'Orders not synced yet')+(S.pendingReport?' · report in progress':'')+' · '+fmt(S.ordersStored)+' orders stored · last run '+dtime(S.lastTick)+(S.usage&&!S.paidPlan?' · database use today: '+fmt(S.usage.w)+' of 100,000 writes, '+fmt(S.usage.r)+' of 5,000,000 reads (Cloudflare free plan)':'');
   $('#events').innerHTML=S.events.length?S.events.map(e=>\`<div class="ev \${e.level}"><time>\${dtime(e.ts)}</time><span>\${esc(e.msg)}</span></div>\`).join(''):'<div class="muted small">No activity yet.</div>';
   // settings
   $('#s-active').checked=s.active;$('#s-delay').value=s.delayDays;$('#s-biz').checked=s.skipBusiness;$('#s-start').value=s.startDate||'';
@@ -352,6 +353,6 @@ async function loadInsights(){const j=await api('/api/insights'),t=j.totals||{};
       <div class="grid g2" style="margin-top:6px"><div><div class="small" style="font-weight:600;color:var(--good)">Customers like</div>\${list(d.pos,'t-sent')}</div><div><div class="small" style="font-weight:600;color:var(--bad)">Customers dislike</div>\${list(d.neg,'t-failed')}</div></div></div>\`}).join(''):'<div class="muted small">Snapshots start once products are selected (up to 3 ASINs per run, refreshed weekly).</div>'}
 
 let start='overview';try{start=localStorage.getItem('rr-tab')||'overview'}catch(e){}
-load().then(()=>show(start)).catch(e=>toast(e.message));setInterval(()=>{if(!document.hidden)load()},60000);
+load().then(()=>show(start));setInterval(()=>{if(!document.hidden)load()},60000);
 </script></body></html>`;
 }
