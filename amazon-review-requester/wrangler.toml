@@ -19,3 +19,6 @@ new_sqlite_classes = ["Store"]
 [[services]]
 binding = "COMMERCE"
 service = "commerce-mcp"
+
+[observability]
+enabled = true
