@@ -1,0 +1,17 @@
+{
+  "name": "indian-craft-supply-crm",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node test/smoke.mjs"
+  },
+  "dependencies": {
+    "postal-mime": "2.4.4"
+  },
+  "devDependencies": {
+    "wrangler": "4.163.0"
+  }
+}

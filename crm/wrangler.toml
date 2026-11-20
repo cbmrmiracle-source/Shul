@@ -1,0 +1,22 @@
+name = "ics-crm"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+run_worker_first = ["/api/*", "/t/*", "/u/*"]
+
+[[durable_objects.bindings]]
+name = "CRM"
+class_name = "CrmDB"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CrmDB"]
+
+# Optional settings (set with `npx wrangler secret put NAME`):
+#   RESEND_API_KEY  - key for sending email through resend.com (can also be entered in Settings)
+#   SETUP_CODE      - one-time code required to create the first admin account
+#   FORWARD_TO      - a verified address that inbound email is also forwarded to
