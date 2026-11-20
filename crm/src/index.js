@@ -2,13 +2,31 @@
 import { DurableObject } from "cloudflare:workers";
 import PostalMime from "postal-mime";
 
+import indexHtml from "../public/index.html";
+import appCss from "../public/app.css";
+import coreJs from "../public/js/core.js";
+import customersJs from "../public/js/customers.js";
+import salesJs from "../public/js/sales.js";
+import moreJs from "../public/js/more.js";
+
 const stub = (env) => env.CRM.get(env.CRM.idFromName("main"));
+const STATIC = {
+  "/": [indexHtml, "text/html; charset=utf-8"], "/index.html": [indexHtml, "text/html; charset=utf-8"],
+  "/app.css": [appCss, "text/css; charset=utf-8"], "/js/core.js": [coreJs, "text/javascript; charset=utf-8"],
+  "/js/customers.js": [customersJs, "text/javascript; charset=utf-8"], "/js/sales.js": [salesJs, "text/javascript; charset=utf-8"], "/js/more.js": [moreJs, "text/javascript; charset=utf-8"],
+};
+const SEC_HEADERS = {
+  "x-content-type-options": "nosniff", "referrer-policy": "same-origin", "x-frame-options": "DENY",
+  "content-security-policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; frame-src 'self' about:; connect-src 'self'; base-uri 'self'; form-action 'self'",
+};
 
 export default {
   async fetch(req, env) {
     const p = new URL(req.url).pathname;
     if (p.startsWith("/api/") || p.startsWith("/t/") || p.startsWith("/u/")) return stub(env).fetch(req);
-    return env.ASSETS.fetch(req);
+    const f = STATIC[p];
+    if (!f) return new Response("Not found", { status: 404 });
+    return new Response(f[0], { headers: { "content-type": f[1], "cache-control": p === "/" || p.endsWith(".html") ? "no-cache" : "public, max-age=300", ...SEC_HEADERS } });
   },
   // Inbound email via Cloudflare Email Routing (route an address like sales@yourdomain to this Worker)
   async email(message, env) {

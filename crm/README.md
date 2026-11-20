@@ -1,6 +1,8 @@
 # Indian Craft Supply CRM
 
-A customer relationship management system for a wholesale jute, burlap and cotton business. It runs entirely on Cloudflare: a Worker serves the app, and a Durable Object holds the SQLite database.
+A customer relationship management system for a wholesale jute, burlap and cotton business. It runs entirely on Cloudflare: a Worker serves the app, and a Durable Object holds the SQLite database. The front-end files in `public/` are bundled into the Worker, so there is no separate asset upload.
+
+Live: https://ics-crm.cb-mrmiracle.workers.dev
 
 ## What's inside
 
@@ -31,11 +33,10 @@ A customer relationship management system for a wholesale jute, burlap and cotto
 cd crm
 npm install
 npx wrangler login            # or set CLOUDFLARE_API_TOKEN
-npx wrangler secret put SETUP_CODE   # any one-time code; needed to create the admin account
-npx wrangler deploy
+npx wrangler deploy --var SETUP_CODE:CHOOSE-A-CODE   # the code is required to create the admin account
 ```
 
-Open the URL Wrangler prints, then create your admin account.
+Open the URL Wrangler prints, then create your admin account using that code. After the admin account exists, the setup page is closed for good, so later deploys don't need `--var`.
 
 ### Connect email sending (Resend)
 

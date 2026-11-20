@@ -2,11 +2,13 @@ name = "ics-crm"
 main = "src/index.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
+preview_urls = false
 
-[assets]
-directory = "./public"
-binding = "ASSETS"
-run_worker_first = ["/api/*", "/t/*", "/u/*"]
+# The front end (public/) is bundled into the Worker as text modules and served by src/index.js.
+[[rules]]
+type = "Text"
+globs = ["**/*.html", "**/*.css", "**/public/js/*.js"]
+fallthrough = false
 
 [[durable_objects.bindings]]
 name = "CRM"
