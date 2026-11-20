@@ -112,6 +112,8 @@ export class Store {
         asin TEXT, taken_at INTEGER, ok INTEGER, pos_mentions INTEGER, neg_mentions INTEGER,
         data TEXT, PRIMARY KEY (asin, taken_at));
       CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, level TEXT, msg TEXT);
+      CREATE TABLE IF NOT EXISTS product_days (asin TEXT, day INTEGER, orders INTEGER, units INTEGER, PRIMARY KEY (asin, day)) WITHOUT ROWID;
+      CREATE TABLE IF NOT EXISTS outcome_days (day INTEGER, asin TEXT, status TEXT, n INTEGER, PRIMARY KEY (day, asin, status)) WITHOUT ROWID;
     `);
   }
 
@@ -135,7 +137,11 @@ export class Store {
     const u = this.todayUsage();
     return u.w > FREE_WRITE_BUDGET || u.r > FREE_READ_BUDGET;
   }
-  invalidate() { this.viewCache = null; this.insightsCache = null; }
+  markPlan({ delays = false, disabled = false } = {}) {
+    const cur = this.get("planFull", null) || { delays: false, disabled: false };
+    this.set("planFull", { delays: cur.delays || delays, disabled: cur.disabled || disabled });
+  }
+  invalidate() { this.viewCache = null; }
   all(q, ...a) { return this.run(q, ...a); }
   one(q, ...a) { return this.all(q, ...a)[0]; }
   get(k, d = null) { const r = this.one("SELECT v FROM kv WHERE k=?", k); return r ? JSON.parse(r.v) : d; }
@@ -156,11 +162,11 @@ export class Store {
       if (p === "/api/dev/import" && this.env.DEV_MODE === "1") { const n = this.importOrders(await request.text()); this.plan(false); return json(n); }
       if (p === "/tick") { await this.tick("schedule"); return json({ ok: true }); }
       if (p === "/api/state") {
-        if (!this.viewCache || (Date.now() - this.viewCache.at > 10 * 60000 && !this.overBudget())) this.viewCache = { at: Date.now(), v: this.stateView() };
+        if (!this.viewCache || (Date.now() - this.viewCache.at > 5 * 60000 && !this.overBudget())) this.viewCache = { at: Date.now(), v: this.stateView() };
         return json({ ...this.viewCache.v, usage: this.todayUsage(), paidPlan: this.env.PAID_PLAN === "1", limitMessage: this.overBudget() ? LIMIT_MSG : null });
       }
       if (p === "/api/insights") {
-        if (!this.insightsCache || (Date.now() - this.insightsCache.at > 30 * 60000 && !this.overBudget())) this.insightsCache = { at: Date.now(), v: this.insightsView() };
+        if (!this.insightsCache || (Date.now() - this.insightsCache.at > 6 * HOUR && !this.overBudget())) this.insightsCache = { at: Date.now(), v: this.insightsView() };
         return json(this.insightsCache.v);
       }
       if (p === "/api/requests") return json(this.requestsView(url.searchParams));
@@ -179,7 +185,7 @@ export class Store {
         this.set("settings", s);
         this.invalidate();
         this.log("info", `Settings saved: ${s.active ? "active" : "paused"}, ${s.delayDays} days after purchase${s.skipBusiness ? ", skipping business orders" : ""}${s.startDate ? `, orders since ${s.startDate}` : ""}`);
-        this.plan(true);
+        this.markPlan({ delays: true });
         return json({ ok: true, settings: s });
       }
       if (p === "/api/products" && request.method === "POST") {
@@ -197,7 +203,7 @@ export class Store {
         }
         this.invalidate();
         if (typeof b.enabled === "boolean") this.log("info", `${b.enabled ? "Enabled" : "Disabled"} review requests for ${asins.length} ASIN${asins.length > 1 ? "s" : ""}`);
-        this.plan(true);
+        this.markPlan({ delays: b.delayOverride !== undefined, disabled: b.enabled === false });
         return json({ ok: true });
       }
       return json({ error: "Not found" }, 404);
@@ -225,11 +231,29 @@ export class Store {
         this.log("info", `Review requests start with orders placed on or after ${START_FROM}.`);
       }
       this.set("lastError", null);
+      if (!this.get("aggV1")) {
+        const since = Math.floor((Date.now() - 31 * DAY) / DAY) * DAY;
+        this.state.storage.transactionSync(() => {
+          this.run(`INSERT OR REPLACE INTO product_days(asin,day,orders,units)
+                    SELECT i.asin, o.purchase_ms / 86400000, COUNT(*), SUM(i.qty) FROM order_items i JOIN orders o ON o.order_id=i.order_id
+                    WHERE o.purchase_ms >= ? GROUP BY i.asin, o.purchase_ms / 86400000`, since);
+          this.run(`INSERT OR REPLACE INTO outcome_days(day,asin,status,n)
+                    SELECT COALESCE(sent_at, updated_at) / 86400000, COALESCE(asin,''), status, COUNT(*) FROM requests
+                    WHERE status NOT IN ('scheduled','retry') GROUP BY 1, 2, 3`);
+          this.set("ordersStored", this.one("SELECT COUNT(*) n FROM orders").n);
+          this.set("aggV1", true);
+        });
+        this.invalidate();
+      }
       if (!this.credentialMode()) {
         this.set("lastError", "Amazon credentials are not configured yet.");
         return;
       }
-      const steps = [["sync orders", () => this.ingest(kind === "manual")], ["plan", () => { if (this.get("planDirty")) this.plan(false); }], ["send", () => this.sendDue()], ["customer feedback", () => this.snapshotFeedback()]];
+      const steps = [["sync orders", () => this.ingest(kind === "manual")], ["plan", () => {
+        const full = this.get("planFull", null);
+        if (full) { this.plan(true, full); this.set("planFull", null); this.log("info", "Applied product and settings changes to the send schedule."); }
+        else if (this.get("planDirty")) this.plan(false);
+      }], ["send", () => this.sendDue()], ["customer feedback", () => this.snapshotFeedback()]];
       for (const [name, fn] of steps) {
         if (this.overBudget()) { this.set("lastError", LIMIT_MSG); break; }
         try { await fn(); } catch (e) {
@@ -325,6 +349,7 @@ export class Store {
       if (prev) { prev.qty += qty; prev.price += price; } else o.items.set(asin, { sku: f[C.sku], title: f[C.title], qty, price, cancelled: /cancel/i.test(f[C.itemStatus] ?? "") });
     }
     const products = new Map();
+    const pdays = new Map();
     let inserted = 0, updated = 0;
     this.state.storage.transactionSync(() => {
       for (const o of orders.values()) {
@@ -341,7 +366,12 @@ export class Store {
             `INSERT INTO orders(order_id,purchase_ms,updated_ms,status,channel,is_business,ship_state,ship_country,units,total,currency)
              VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
             o.id, o.purchase, o.updated, o.status, o.channel, o.business, o.state, o.country, units, round2(total), o.currency);
-          for (const [asin, it] of o.items) this.run("INSERT OR IGNORE INTO order_items(order_id,asin,sku,qty,price) VALUES(?,?,?,?,?)", o.id, asin, it.sku, it.qty, round2(it.price));
+          for (const [asin, it] of o.items) {
+            this.run("INSERT OR IGNORE INTO order_items(order_id,asin,sku,qty,price) VALUES(?,?,?,?,?)", o.id, asin, it.sku, it.qty, round2(it.price));
+            const key = asin + "|" + Math.floor(o.purchase / DAY);
+            const c = pdays.get(key) ?? { orders: 0, units: 0 };
+            c.orders++; c.units += it.qty; pdays.set(key, c);
+          }
           inserted++;
         } else if (prev.status !== o.status || prev.updated_ms !== o.updated) {
           // only the order row changes after the first import (status, totals); items stay as they were
@@ -351,6 +381,11 @@ export class Store {
           if (/cancel/i.test(o.status)) this.run("UPDATE requests SET status='skipped', last_error='Order cancelled', updated_at=? WHERE order_id=? AND status IN ('scheduled','retry')", Date.now(), o.id);
         }
       }
+      for (const [key, c] of pdays) {
+        const [asin, day] = key.split("|");
+        this.run("INSERT INTO product_days(asin,day,orders,units) VALUES(?,?,?,?) ON CONFLICT DO UPDATE SET orders=orders+excluded.orders, units=units+excluded.units", asin, Number(day), c.orders, c.units);
+      }
+      if (inserted) this.set("ordersStored", (this.get("ordersStored", 0) || 0) + inserted);
       // one write per product per sync, and none when nothing changed
       for (const [asin, p] of products) {
         this.run(
@@ -368,7 +403,7 @@ export class Store {
   // full=false after an order sync: only adds requests for new orders.
   // full=true after settings or product changes: also drops requests that no longer
   // qualify and moves send dates whose delay changed. Rows are only written when they change.
-  plan(full = false) {
+  plan(full = false, what = { delays: true, disabled: true }) {
     const s = this.settings();
     const now = Date.now();
     this.set("planDirty", false);
@@ -379,10 +414,12 @@ export class Store {
     this.state.storage.transactionSync(() => {
       if (full) {
         this.run(`DELETE FROM requests WHERE status IN ('scheduled','retry') AND order_id NOT IN (${eligible})`, start, skipBiz);
+        if (what.delays) {
         const delayOf = `(SELECT MIN(COALESCE(p.delay_override, ?1)) FROM order_items i JOIN products p ON p.asin=i.asin AND p.enabled=1 WHERE i.order_id=requests.order_id)`;
         this.run(`UPDATE requests SET delay_days=${delayOf}, due_at=purchase_ms + ${delayOf} * 86400000, updated_at=?2
                   WHERE status='scheduled' AND delay_days IS NOT ${delayOf}`, s.delayDays, now);
-        this.run(`UPDATE requests SET asin=(SELECT MIN(p.asin) FROM order_items i JOIN products p ON p.asin=i.asin AND p.enabled=1 WHERE i.order_id=requests.order_id)
+        }
+        if (what.disabled) this.run(`UPDATE requests SET asin=(SELECT MIN(p.asin) FROM order_items i JOIN products p ON p.asin=i.asin AND p.enabled=1 WHERE i.order_id=requests.order_id)
                   WHERE status IN ('scheduled','retry') AND asin NOT IN (SELECT asin FROM products WHERE enabled=1)`);
       }
       this.run(
@@ -406,16 +443,17 @@ export class Store {
     if (!s.active) return;
     const now = Date.now();
     const due = this.all(
-      `SELECT r.order_id, r.purchase_ms, r.attempts, o.status FROM requests r JOIN orders o ON o.order_id=r.order_id
+      `SELECT r.order_id, r.asin, r.purchase_ms, r.attempts, o.status FROM requests r JOIN orders o ON o.order_id=r.order_id
        WHERE r.status IN ('scheduled','retry') AND r.due_at <= ? ORDER BY r.due_at LIMIT ?`, now, SEND_BATCH);
     let sent = 0, notYet = 0, inel = 0;
     for (const r of due) {
       const age = (now - r.purchase_ms) / DAY;
-      if (age > MAX_ORDER_AGE_DAYS) { this.mark(r.order_id, "expired", "Past Amazon's 30-day request window"); continue; }
+      if (age > MAX_ORDER_AGE_DAYS) { this.mark(r, "expired", "Past Amazon's 30-day request window"); continue; }
       if (!/^shipped/i.test(r.status)) { this.retryLater(r, 12 * HOUR, `Order status is ${r.status}`); continue; }
       const res = await this.sp("POST", `/solicitations/v1/orders/${r.order_id}/solicitations/productReviewAndSellerFeedback`, { marketplaceIds: MARKETPLACE });
       if (res.status === 201 || res.status === 200) {
         this.run("UPDATE requests SET status='sent', sent_at=?, attempts=attempts+1, last_error=NULL, updated_at=? WHERE order_id=?", now, now, r.order_id);
+        this.countOutcome(r.asin, "sent");
         sent++;
       } else if (res.status === 429) {
         this.log("warn", "Amazon rate limit reached; continuing next run.");
@@ -425,9 +463,9 @@ export class Store {
       } else {
         // Not eligible (yet). Usually: not delivered long enough, already requested, or a return.
         const msg = errText(res);
-        if (/already/i.test(msg)) { this.mark(r.order_id, "already", msg); continue; }
+        if (/already/i.test(msg)) { this.mark(r, "already", msg); continue; }
         if (age < 30 && r.attempts < 4) { this.retryLater(r, DAY, msg); notYet++; }
-        else { this.mark(r.order_id, "ineligible", msg); inel++; }
+        else { this.mark(r, "ineligible", msg); inel++; }
       }
       await sleep(1100); // Solicitations API allows 1 request/second
     }
@@ -437,8 +475,12 @@ export class Store {
   retryLater(r, ms, err) {
     this.run("UPDATE requests SET status='retry', attempts=attempts+1, due_at=?, last_error=?, updated_at=? WHERE order_id=?", Date.now() + ms, err, Date.now(), r.order_id);
   }
-  mark(id, status, err) {
-    this.run("UPDATE requests SET status=?, attempts=attempts+1, last_error=?, updated_at=? WHERE order_id=?", status, err, Date.now(), id);
+  mark(r, status, err) {
+    this.run("UPDATE requests SET status=?, attempts=attempts+1, last_error=?, updated_at=? WHERE order_id=?", status, err, Date.now(), r.order_id);
+    this.countOutcome(r.asin, status);
+  }
+  countOutcome(asin, status) {
+    this.run("INSERT INTO outcome_days(day,asin,status,n) VALUES(?,?,?,1) ON CONFLICT DO UPDATE SET n=n+1", Math.floor(Date.now() / DAY), asin ?? "", status);
   }
 
   // ---- 4. customer feedback snapshots (brand-registered ASINs)
@@ -521,32 +563,52 @@ export class Store {
   stateView() {
     const now = Date.now();
     const s = this.settings();
-    const products = this.all(
-      `WITH oc AS (SELECT i.asin, COUNT(DISTINCT i.order_id) n30, SUM(i.qty) u30 FROM order_items i JOIN orders o ON o.order_id=i.order_id WHERE o.purchase_ms > ? GROUP BY i.asin),
-            rc AS (SELECT asin, SUM(status='sent') sent, SUM(status IN ('scheduled','retry')) queued, SUM(status IN ('ineligible','expired','already')) inel FROM requests GROUP BY asin)
-       SELECT p.asin, p.sku, p.title, p.enabled, p.delay_override, p.last_order, COALESCE(oc.n30,0) orders30, COALESCE(oc.u30,0) units30,
-              COALESCE(rc.sent,0) sent, COALESCE(rc.queued,0) queued, COALESCE(rc.inel,0) inel
-       FROM products p LEFT JOIN oc ON oc.asin=p.asin LEFT JOIN rc ON rc.asin=p.asin
-       ORDER BY p.enabled DESC, orders30 DESC, p.last_order DESC`, now - 30 * DAY);
-    const counts = Object.fromEntries(this.all("SELECT status, COUNT(*) n FROM requests GROUP BY status").map((r) => [r.status, r.n]));
-    const daily = this.all(
-      `SELECT CAST((sent_at - ?) / 86400000 AS INTEGER) d, COUNT(*) n FROM requests WHERE status='sent' AND sent_at > ? GROUP BY d`, startOfDay(now) - 29 * DAY, startOfDay(now) - 29 * DAY);
-    const dailyFail = this.all(
-      `SELECT CAST((updated_at - ?) / 86400000 AS INTEGER) d, COUNT(*) n FROM requests WHERE status IN ('ineligible','expired','already') AND updated_at > ? GROUP BY d`, startOfDay(now) - 29 * DAY, startOfDay(now) - 29 * DAY);
-    const upcoming = this.all(
-      `SELECT CAST((MAX(due_at, ?) - ?) / 86400000 AS INTEGER) d, COUNT(*) n FROM requests WHERE status IN ('scheduled','retry') AND due_at < ? GROUP BY d`, now, startOfDay(now), startOfDay(now) + 14 * DAY);
-    const sent7 = this.one("SELECT COUNT(*) n FROM requests WHERE status='sent' AND sent_at > ?", now - 7 * DAY).n;
+    const today = Math.floor(now / DAY);
+    // reads stay small: daily counters plus the queued requests (index range)
+    const queuedRows = this.all("SELECT asin, status, due_at FROM requests WHERE status IN ('scheduled','retry')");
+    const queuedBy = {}, upcomingMap = {}, counts = {};
+    for (const r of queuedRows) {
+      queuedBy[r.asin] = (queuedBy[r.asin] || 0) + 1;
+      counts[r.status] = (counts[r.status] || 0) + 1;
+      const d = Math.floor((Math.max(r.due_at, now) - startOfDay(now)) / DAY);
+      if (d < 14) upcomingMap[d] = (upcomingMap[d] || 0) + 1;
+    }
+    const outcomes = this.all("SELECT day, asin, status, n FROM outcome_days");
+    const outBy = {}, sentDaily = {}, failDaily = {};
+    let sent7 = 0, sent30 = 0;
+    for (const o of outcomes) {
+      counts[o.status] = (counts[o.status] || 0) + o.n;
+      const a = (outBy[o.asin] ||= { sent: 0, inel: 0 });
+      const d = o.day - (today - 29);
+      if (o.status === "sent") {
+        a.sent += o.n;
+        if (d >= 0) sentDaily[d] = (sentDaily[d] || 0) + o.n;
+        if (o.day > today - 7) sent7 += o.n;
+        if (o.day > today - 30) sent30 += o.n;
+      } else if (["ineligible", "expired", "already"].includes(o.status)) {
+        a.inel += o.n;
+        if (d >= 0) failDaily[d] = (failDaily[d] || 0) + o.n;
+      }
+    }
+    const pd = Object.fromEntries(this.all("SELECT asin, SUM(orders) n30, SUM(units) u30 FROM product_days WHERE day > ? GROUP BY asin", today - 30).map((r) => [r.asin, r]));
+    const products = this.all("SELECT asin, sku, title, enabled, delay_override, last_order FROM products").map((p) => ({
+      ...p, orders30: pd[p.asin]?.n30 || 0, units30: pd[p.asin]?.u30 || 0,
+      sent: outBy[p.asin]?.sent || 0, queued: queuedBy[p.asin] || 0, inel: outBy[p.asin]?.inel || 0,
+    })).sort((a, b) => b.enabled - a.enabled || b.orders30 - a.orders30 || (b.last_order || 0) - (a.last_order || 0));
+    // coverage: orders of selected products that are old enough to be due, vs requests sent
+    const startDay = s.startDate ? Math.floor(Date.parse(s.startDate) / DAY) : 0;
     const eligibleOrders30 = this.one(
-      `SELECT COUNT(DISTINCT o.order_id) n FROM orders o JOIN order_items i ON i.order_id=o.order_id JOIN products p ON p.asin=i.asin AND p.enabled=1
-       WHERE o.purchase_ms > ? AND o.status NOT LIKE '%ancel%'`, now - 30 * DAY).n;
-    const sentFor30 = this.one("SELECT COUNT(*) n FROM requests WHERE status='sent' AND purchase_ms > ?", now - 30 * DAY).n;
+      `SELECT COALESCE(SUM(d.orders),0) n FROM product_days d JOIN products p ON p.asin=d.asin AND p.enabled=1
+       WHERE d.day > ? AND d.day <= ? AND d.day >= ?`, today - 30 - s.delayDays, today - s.delayDays, startDay).n;
+    const toArr = (m) => Object.entries(m).map(([d, n]) => ({ d: Number(d), n }));
     return {
       settings: s,
       credentials: this.credentialMode(),
       lastTick: this.get("lastTick"), lastIngest: this.get("lastIngest"), pendingReport: this.get("pendingReport"), lastError: this.get("lastError"),
-      ordersStored: this.one("SELECT COUNT(*) n FROM orders").n,
-      counts, sent7, eligibleOrders30, sentFor30,
-      series: { start: startOfDay(now) - 29 * DAY, sent: daily, failed: dailyFail, upcomingStart: startOfDay(now), upcoming },
+      pendingChanges: !!this.get("planFull", null),
+      ordersStored: this.get("ordersStored", 0),
+      counts, sent7, eligibleOrders30, sentFor30: sent30,
+      series: { start: startOfDay(now) - 29 * DAY, sent: toArr(sentDaily), failed: toArr(failDaily), upcomingStart: startOfDay(now), upcoming: toArr(upcomingMap) },
       products,
       events: this.all("SELECT ts, level, msg FROM events ORDER BY id DESC LIMIT 60"),
     };

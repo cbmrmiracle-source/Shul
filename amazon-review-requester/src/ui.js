@@ -276,6 +276,7 @@ function render(){
   if(!S.credentials)msgs.push('<b>Connect Amazon:</b> add the Amazon credentials as Worker secrets (see the README). Until then nothing is synced or sent.');
   if(S.credentials&&!S.ordersStored)msgs.push('<b>First sync in progress.</b> Amazon is preparing a 30-day order report; products will appear within ~15–30 minutes.');
   if(S.ordersStored&&!enabled)msgs.push('<b>No products selected yet.</b> Go to <a href="#" onclick="show(\\'products\\');return false">Products</a> and enable the ASINs you want to request reviews for.');
+  if(S.pendingChanges)msgs.push('<b>Changes saved.</b> The send schedule updates at the next run, within 5 minutes.');
   if(S.limitMessage)msgs.push('<b>Paused for today.</b> '+esc(S.limitMessage));
   else if(S.lastError)msgs.push('<b>Last run had a problem:</b> '+esc(S.lastError));
   note.innerHTML=msgs.join('<br>');note.classList.toggle('hidden',!msgs.length);
