@@ -433,7 +433,7 @@ export class Store {
          WHERE o.status NOT LIKE '%ancel%' AND o.purchase_ms >= ?3 AND (?4 = 0 OR o.is_business = 0)
            AND NOT EXISTS (SELECT 1 FROM requests r WHERE r.order_id = o.order_id)
          GROUP BY o.order_id`,
-        s.delayDays, now, start, skipBiz);
+        s.delayDays, now, full ? start : Math.max(start, now - 4 * DAY), skipBiz); // after a sync only recent orders can be new
     });
   }
 
