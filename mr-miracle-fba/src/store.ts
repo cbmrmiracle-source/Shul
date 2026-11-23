@@ -1,7 +1,7 @@
 // The single Durable Object that owns all data (SQLite), the API, auth, and the background scheduler.
 import { DurableObject } from "cloudflare:workers";
 import { Amazon, RateLimited } from "./amazon";
-import { SCHEMA } from "./schema";
+import { MIGRATIONS, SCHEMA } from "./schema";
 import { emailLayout, emailProvider, emailTable, sendMail } from "./email";
 import { BACKFILL_DAYS, pendingReport, pollReports, requestOrders, requestReport, syncCatalog, syncInventory } from "./sync";
 import { DEFAULT_RULES, REASON_MANUAL, REASON_REPRICE, REASON_SELLERS, enqueueOffers, processOfferBatch, processPriceQueue, type Rule } from "./offers";
@@ -31,6 +31,7 @@ export class Store extends DurableObject {
     this.ctx = ctx; this.env = env;
     this.sql = ctx.storage.sql;
     this.sql.exec(SCHEMA);
+    for (const m of MIGRATIONS) { try { this.sql.exec(m); } catch { /* already applied */ } }
     this.amz = new Amazon(env, (k) => this.secret(k));
     if (!this.one(`SELECT 1 x FROM reprice_rules LIMIT 1`)) {
       for (const r of DEFAULT_RULES) this.run(`INSERT INTO reprice_rules (name, json) VALUES (?,?)`, r.name, JSON.stringify(r));

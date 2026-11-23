@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS products (sku TEXT PRIMARY KEY, asin TEXT, fnsku TEXT
   direct_fba INTEGER DEFAULT 0, errors INTEGER DEFAULT 0, cogs REAL, catalog_at INTEGER, first_seen INTEGER, updated_at INTEGER);
 CREATE INDEX IF NOT EXISTS products_asin ON products(asin);
 CREATE TABLE IF NOT EXISTS sales_daily (day TEXT, sku TEXT, asin TEXT, units INTEGER, revenue REAL, priced_units INTEGER, orders INTEGER,
-  est_revenue REAL DEFAULT 0, PRIMARY KEY (day, sku));
+  est_revenue REAL DEFAULT 0, asp_revenue REAL DEFAULT 0, asp_units INTEGER DEFAULT 0,
+  last_price REAL, last_ts INTEGER, PRIMARY KEY (day, sku));
 CREATE INDEX IF NOT EXISTS sales_sku ON sales_daily(sku, day);
 CREATE INDEX IF NOT EXISTS sales_asin ON sales_daily(asin, day);
 CREATE TABLE IF NOT EXISTS inventory (sku TEXT PRIMARY KEY, asin TEXT, fnsku TEXT, fulfillable INTEGER, reserved INTEGER, fc_transfer INTEGER,
@@ -52,3 +53,11 @@ CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGE
 CREATE TABLE IF NOT EXISTS email_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, kind TEXT, subject TEXT, status TEXT, error TEXT);
 CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, user TEXT, action TEXT, detail TEXT);
 `;
+
+/** Column additions for databases created by earlier versions (each is tried once; "duplicate column" errors are ignored). */
+export const MIGRATIONS = [
+  "ALTER TABLE sales_daily ADD COLUMN asp_revenue REAL DEFAULT 0",
+  "ALTER TABLE sales_daily ADD COLUMN asp_units INTEGER DEFAULT 0",
+  "ALTER TABLE sales_daily ADD COLUMN last_price REAL",
+  "ALTER TABLE sales_daily ADD COLUMN last_ts INTEGER",
+];

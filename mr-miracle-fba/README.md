@@ -54,7 +54,7 @@ npm run deploy       # embeds public/ and deploys
 Tests for report parsing, fee-change detection, analytics and repricer decisions run against real report files:
 
 ```bash
-npx esbuild test/entry.ts --bundle --format=esm --platform=node --external:cloudflare:* --outfile=test/.bundle.mjs
+npx esbuild test/entry.ts --bundle --format=esm --platform=node --alias:cloudflare:sockets=./test/stub-sockets.mjs --outfile=test/.bundle.mjs
 node test/harness.mjs <folder with orders.tsv, fees.tsv, planning.tsv>
 ```
 

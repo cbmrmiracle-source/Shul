@@ -59,7 +59,7 @@ export async function requestOrders(S: Store, kind: "orders_recent" | "orders_ba
 }
 
 async function processOrders(S: Store, res: Response, gzip: boolean, p: { from: string; to: string }) {
-  const agg = new Map<string, { day: string; sku: string; asin: string; units: number; revenue: number; priced: number; orders: number; est: number }>();
+  const agg = new Map<string, { day: string; sku: string; asin: string; units: number; revenue: number; priced: number; orders: number; est: number; aspRev: number; aspUnits: number; lastPrice: number | null; lastTs: number }>();
   const prices = new Map<string, number>(S.all(`SELECT sku, price FROM products`).map((r) => [r.sku, r.price || 0]));
   const seenProducts = new Map<string, { asin: string; title: string }>();
   let n = 0;
@@ -70,22 +70,32 @@ async function processOrders(S: Store, res: Response, gzip: boolean, p: { from: 
     if (ch && !/^amazon\.com$/i.test(ch)) return; // skip non-Amazon (MCF) & other marketplaces
     const sku = r["sku"]; if (!sku) return;
     const qty = num(r["quantity"]); if (!qty) return;
-    const day = dayOf(Date.parse(r["purchase-date"]), SALES_TZ);
+    const ts = Date.parse(r["purchase-date"]);
+    const day = dayOf(ts, SALES_TZ);
     if (day < p.from || day > p.to) return;
     const key = day + "|" + sku;
     let a = agg.get(key);
-    if (!a) { a = { day, sku, asin: r["asin"], units: 0, revenue: 0, priced: 0, orders: 0, est: 0 }; agg.set(key, a); }
+    if (!a) { a = { day, sku, asin: r["asin"], units: 0, revenue: 0, priced: 0, orders: 0, est: 0, aspRev: 0, aspUnits: 0, lastPrice: null, lastTs: 0 }; agg.set(key, a); }
     a.units += qty; a.orders += 1;
     const ip = r["item-price"];
-    if (ip !== "" && ip !== undefined) { a.revenue += num(ip); a.priced += qty; }
+    if (ip !== "" && ip !== undefined) {
+      const v = num(ip);
+      a.revenue += v; a.priced += qty;
+      // price signal for price-vs-sales: consumer orders only (business/quantity pricing differs), skip free lines
+      if (v > 0 && r["is-business-order"] !== "true") {
+        a.aspRev += v; a.aspUnits += qty;
+        if (ts >= a.lastTs) { a.lastTs = ts; a.lastPrice = Math.round(v / qty * 100) / 100; } // price in effect at end of day
+      }
+    }
     else { const est = (prices.get(sku) || 0) * qty; a.revenue += est; a.est += est; }
     if (!seenProducts.has(sku)) seenProducts.set(sku, { asin: r["asin"], title: r["product-name"] });
   }, "amazon-order-id");
   S.ctx.storage.transactionSync(() => {
     S.run(`DELETE FROM sales_daily WHERE day >= ? AND day <= ?`, p.from, p.to);
     for (const a of agg.values()) {
-      S.run(`INSERT INTO sales_daily (day, sku, asin, units, revenue, priced_units, orders, est_revenue) VALUES (?,?,?,?,?,?,?,?)`,
-        a.day, a.sku, a.asin, a.units, Math.round(a.revenue * 100) / 100, a.priced, a.orders, Math.round(a.est * 100) / 100);
+      S.run(`INSERT INTO sales_daily (day, sku, asin, units, revenue, priced_units, orders, est_revenue, asp_revenue, asp_units, last_price, last_ts) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+        a.day, a.sku, a.asin, a.units, Math.round(a.revenue * 100) / 100, a.priced, a.orders, Math.round(a.est * 100) / 100,
+        Math.round(a.aspRev * 100) / 100, a.aspUnits, a.lastPrice, a.lastTs || null);
     }
     for (const [sku, v] of seenProducts) {
       S.run(`INSERT INTO products (sku, asin, title, mrm_auto, first_seen, updated_at) VALUES (?,?,?,?,?,?) ON CONFLICT(sku) DO NOTHING`,

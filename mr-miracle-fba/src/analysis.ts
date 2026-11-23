@@ -1,6 +1,6 @@
 // Sales analytics, price ↔ sales correlation, period comparison, inventory status.
 import type { Store } from "./store";
-import { addDays, dayRange, daysBetween, round2 } from "./util";
+import { addDays, dayOf, dayRange, daysBetween, round2 } from "./util";
 
 type Group = "asin" | "sku";
 
@@ -93,47 +93,58 @@ export function productMeta(S: Store) {
 
 /**
  * Price ↔ sales analysis for one item (ASIN or SKU group).
- * Price per day = our recorded price changes where known, otherwise average selling price from orders.
- * A price change event is a step of ≥ threshold% that holds for at least `minHold` days with sales.
+ * Price per day = the consumer price of the day's last order (business/quantity pricing excluded),
+ * plus every price change made in this system. A price change event is a step of ≥ threshold% that holds 2 days.
  */
 export function priceAnalysis(S: Store, skus: string[], from: string, to: string, windowDays = 14, thresholdPct = 3) {
   const f = skuFilter(skus);
-  const rows = S.all(`SELECT day, SUM(units) units, SUM(revenue) revenue, SUM(priced_units) pu,
-                        SUM(CASE WHEN priced_units>0 THEN revenue - est_revenue ELSE 0 END) prev
+  const rows = S.all(`SELECT day, SUM(units) units, SUM(revenue) revenue, SUM(asp_units) pu, SUM(asp_revenue) prev
                       FROM sales_daily s WHERE day>=? AND day<=?${f.sql} GROUP BY day`,
     addDays(from, -windowDays), addDays(to, windowDays), ...f.args);
   const byDay = new Map(rows.map((r) => [r.day, r]));
   const hist = S.all(`SELECT sku, ts, old_price, new_price, source, user FROM price_history s WHERE 1=1${f.sql} ORDER BY ts`, ...f.args);
   const days = dayRange(addDays(from, -windowDays), addDays(to, windowDays));
+  // only compare inside the sales history we actually have loaded
+  const dataStart: string = S.one(`SELECT MIN(day) d FROM sales_daily`)?.d || from;
+  const firstIdx = Math.max(0, days.indexOf(dataStart) >= 0 ? days.indexOf(dataStart) : dataStart > days[0] ? days.length : 0);
+  // end-of-day consumer price (when several SKUs share an ASIN, the latest sale wins)
+  const setPrice = new Map<string, { p: number; ts: number }>();
+  for (const r of S.all(`SELECT day, last_price, last_ts FROM sales_daily s WHERE day>=? AND day<=? AND last_price IS NOT NULL${f.sql}`,
+    days[0], days[days.length - 1], ...f.args)) {
+    const cur = setPrice.get(r.day);
+    if (!cur || r.last_ts > cur.ts) setPrice.set(r.day, { p: r.last_price, ts: r.last_ts });
+  }
   const series = days.map((d) => {
     const r: any = byDay.get(d);
     const asp = r && r.pu > 0 ? round2(r.prev / r.pu) : null;
-    return { day: d, units: r?.units || 0, revenue: round2(r?.revenue || 0), asp };
+    return { day: d, units: r?.units || 0, revenue: round2(r?.revenue || 0), asp, set: setPrice.get(d)?.p ?? asp };
   });
-  // build smoothed "list price" level: carry forward ASP, ignoring single-day blips
+  // step detection on the end-of-day price: a move of ≥ threshold% that holds for 2 days with sales (or is the latest day)
+  let lastDataIdx = -1;
+  series.forEach((s, i) => { if (s.set !== null) lastDataIdx = i; });
   let level: number | null = null;
   const events: any[] = [];
   let pending: { day: string; price: number; idx: number; count: number } | null = null;
   const price: (number | null)[] = [];
   series.forEach((s, i) => {
-    if (s.asp === null) { price.push(level); return; }
-    if (level === null) { level = s.asp; price.push(level); return; }
-    const pct = (s.asp - level) / level * 100;
-    if (Math.abs(pct) >= thresholdPct) {
-      if (pending && Math.abs((s.asp - pending.price) / pending.price * 100) < thresholdPct) pending.count++;
-      else pending = { day: s.day, price: s.asp, idx: i, count: 1 };
-      if (pending.count >= 2 || s.units >= 5) {
+    const p = s.set;
+    if (p === null || i < firstIdx) { price.push(level); return; }
+    if (level === null) { level = p; price.push(level); return; }
+    if (Math.abs(p - level) / level * 100 >= thresholdPct) {
+      if (pending && Math.abs(p - pending.price) / pending.price * 100 < thresholdPct) { pending.count++; pending.price = p; }
+      else pending = { day: s.day, price: p, idx: i, count: 1 };
+      if (pending.count >= 2 || i === lastDataIdx) {
         events.push({ day: pending.day, idx: pending.idx, oldPrice: level, newPrice: pending.price, source: "detected" });
         level = pending.price;
         for (let k = pending.idx; k < i; k++) price[k] = level;
         pending = null;
       }
-    } else { pending = null; level = round2(level * 0.7 + s.asp * 0.3); }
+    } else { pending = null; level = p; }
     price.push(level);
   });
   // recorded changes from this system are authoritative
   for (const h of hist) {
-    const d = new Date(h.ts).toISOString().slice(0, 10);
+    const d = dayOf(h.ts);
     const idx = days.indexOf(d);
     if (idx < 0) continue;
     const near = events.find((e) => Math.abs(e.idx - idx) <= 2);
@@ -143,7 +154,7 @@ export function priceAnalysis(S: Store, skus: string[], from: string, to: string
   events.sort((a, b) => a.idx - b.idx);
   const out = events.filter((e) => e.day >= from && e.day <= to).map((e, k, arr) => {
     const prevIdx = k > 0 ? arr[k - 1].idx : -Infinity, nextIdx = k < arr.length - 1 ? arr[k + 1].idx : Infinity;
-    const bStart = Math.max(e.idx - windowDays, prevIdx === -Infinity ? 0 : prevIdx, 0), bEnd = e.idx - 1;
+    const bStart = Math.max(e.idx - windowDays, prevIdx === -Infinity ? 0 : prevIdx, firstIdx), bEnd = e.idx - 1;
     const aStart = e.idx, aEnd = Math.min(e.idx + windowDays - 1, nextIdx === Infinity ? series.length - 1 : nextIdx - 1, series.length - 1);
     const todayIdx = days.indexOf(S.salesToday());
     const aEndC = todayIdx >= 0 ? Math.min(aEnd, todayIdx - 1) : aEnd;
@@ -160,15 +171,16 @@ export function priceAnalysis(S: Store, skus: string[], from: string, to: string
       day: e.day, oldPrice: round2(e.oldPrice), newPrice: round2(e.newPrice), pricePct, source: e.source, user: e.user || null,
       before, after, unitsPct, revenuePct: revPct,
       elasticity: pricePct && unitsPct !== null ? round2(unitsPct / pricePct) : null,
-      verdict: verdict(pricePct, unitsPct, revPct, after.days),
+      verdict: verdict(pricePct, unitsPct, revPct, after.days, before.days),
     };
   });
   const visible = series.map((s, i) => ({ ...s, price: price[i] !== null ? round2(price[i]!) : null })).filter((s) => s.day >= from && s.day <= to);
   return { series: visible, events: out };
 }
 
-function verdict(pricePct: number | null, unitsPct: number | null, revPct: number | null, afterDays: number) {
-  if (afterDays < 3) return "Too early to tell";
+function verdict(pricePct: number | null, unitsPct: number | null, revPct: number | null, afterDays: number, beforeDays = 99) {
+  if (afterDays < 3) return "Too few days at the new price";
+  if (beforeDays < 3) return "Too few days at the previous price";
   if (pricePct === null || unitsPct === null || revPct === null) return "Not enough sales data";
   const dir = pricePct > 0 ? "Price up" : "Price down";
   if (revPct > 5) return `${dir} → revenue up ${revPct}%`;
@@ -180,7 +192,7 @@ function verdict(pricePct: number | null, unitsPct: number | null, revPct: numbe
 export function salesGrid(S: Store, from: string, to: string, skus: string[] | null, group: Group, metric: "units" | "revenue" | "price") {
   const f = skuFilter(skus);
   const key = group === "asin" ? "COALESCE(asin, sku)" : "sku";
-  const rows = S.all(`SELECT ${key} k, day, SUM(units) u, SUM(revenue) r, SUM(priced_units) pu, SUM(revenue-est_revenue) pr
+  const rows = S.all(`SELECT ${key} k, day, SUM(units) u, SUM(revenue) r, SUM(asp_units) pu, SUM(asp_revenue) pr
                       FROM sales_daily s WHERE day>=? AND day<=?${f.sql} GROUP BY k, day`, from, to, ...f.args);
   const days = dayRange(from, to).reverse();
   const meta = productMeta(S);

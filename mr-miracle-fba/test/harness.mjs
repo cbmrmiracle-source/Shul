@@ -1,5 +1,5 @@
 // Runs the real report processors + analytics against a local SQLite DB (node:sqlite).
-// Usage: npx esbuild test/entry.ts --bundle --format=esm --platform=node --external:cloudflare:* --outfile=test/.bundle.mjs
+// Usage: npx esbuild test/entry.ts --bundle --format=esm --platform=node --alias:cloudflare:sockets=./test/stub-sockets.mjs --outfile=test/.bundle.mjs
 //        node test/harness.mjs <dir with orders.tsv [fees.tsv planning.tsv]>
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync, existsSync } from "node:fs";
@@ -106,3 +106,13 @@ ok(d1.target === 14.98, `feedback filter drops seller B → ${d1.target}`);
 ok(new Date(M.util.dayStart("2026-11-23")).toISOString() === "2026-11-23T08:00:00.000Z", "LA midnight (PST)");
 ok(new Date(M.util.dayStart("2026-07-01")).toISOString() === "2026-07-01T07:00:00.000Z", "LA midnight (PDT)");
 console.log(process.exitCode ? "SOME TESTS FAILED" : "ALL OK");
+
+// ---- price events on a known product (B07D91971R: 11.49 → 10.40 → 11.49 → 10.40 → 11.99 → 13.99) ----
+{
+  const skus = S.all(`SELECT DISTINCT sku FROM sales_daily WHERE asin='B07D91971R'`).map((r) => r.sku);
+  if (skus.length) {
+    const a = M.priceAnalysis(S, skus, "2026-10-25", "2026-11-22", 7, 3);
+    console.log(a.events.map((e) => `${e.day}: ${e.oldPrice} → ${e.newPrice} (${e.pricePct}%) units/day ${e.before.unitsPerDay} → ${e.after.unitsPerDay} [${e.verdict}]`).join("\n"));
+    ok(a.events.some((e) => e.day === "2026-11-06" && e.newPrice === 11.49) && a.events.some((e) => e.day === "2026-11-18" && e.newPrice === 11.99), "B07D91971R price steps detected on the right days with exact prices");
+  }
+}
