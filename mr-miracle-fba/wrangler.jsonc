@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mr-miracle-fba",
+  "main": "src/index.ts",
+  "build": { "command": "node scripts/embed-static.mjs" },
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Store" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Store"] }],
+  // Amazon access goes through the existing commerce-mcp Worker (same as review-requester)
+  "services": [{ "binding": "COMMERCE", "service": "commerce-mcp" }],
+  "kv_namespaces": [{ "binding": "IMAGES", "id": "4e9ef3c5a16c4847b70b1723e5b94311" }],
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "vars": {
+    "SELLER_ID": "ANEOVR6FCDPOY",
+    "MARKETPLACE_ID": "ATVPDKIKX0DER"
+  },
+  "observability": { "enabled": true }
+}
