@@ -8,13 +8,13 @@ import { DEFAULT_RULES, REASON_MANUAL, REASON_REPRICE, REASON_SELLERS, enqueueOf
 import { DEFAULT_FEE_EMAIL, buildFeeEmail, diffFees, feeChanges, maybeSendFeeEmail } from "./fees";
 import { DEFAULT_INV_SETTINGS, compareRanges, inventoryRows, priceAnalysis, productMeta, resolveSkus, salesGrid, salesReport } from "./analysis";
 import { currentImages, processImageJobs, queueImageJob, storeUpload } from "./images";
-import { ShipError, boxLabels, createDraft, defaultAddress, getPlan, setItems, step as shipStep, unitLabels } from "./shipping";
+import { DEFAULT_TARGET, ShipError, WAREHOUSE_ACTIONS, createDraft, defaultAddress, getPlan, parseLines, runTargeting, setItems, shipmentLabels, step as shipStep, unitLabels } from "./shipping";
 import { SALES_TZ, addDays, esc, hashPassword, num, parseCsv, randomToken, round2, safeEqual, today } from "./util";
 
 
 const SECRET_KEYS = ["COMMERCE_MCP_SECRET", "GMAIL_USER", "GMAIL_APP_PASSWORD", "RESEND_API_KEY"];
 const MIN = 60_000, HOUR = 3_600_000;
-const ROLES = ["admin", "manager", "viewer"];
+const ROLES = ["admin", "manager", "warehouse", "viewer"];
 
 class HttpError extends Error { constructor(public status: number, msg: string) { super(msg); } }
 
@@ -229,6 +229,7 @@ export class Store extends DurableObject {
       return `${asins.length} ASINs queued`;
     }, 0.97);
 
+    await this.task("ship_target", 5 * MIN, async () => { await runTargeting(this); return ""; }, 0.97);
     try { await processOfferBatch(this); } catch (e: any) { if (!(e instanceof RateLimited)) this.log("offers", e.message); }
     await processPriceQueue(this);
     await processImageJobs(this);
@@ -379,6 +380,17 @@ export class Store extends DurableObject {
     }
     const write = method !== "GET";
     if (write && me.role === "viewer") throw new HttpError(403, "View-only account.");
+    if (me.role === "warehouse") {
+      const okRead = /^\/api\/(products|inventory|inv-errors|ship\/|labels\/)/.test(path);
+      const okWrite = /^\/api\/ship\/(plans(\/\d+(\/items)?)?|parse)$/.test(path) || /^\/api\/ship\/plans\/\d+\/step$/.test(path);
+      if (!write && !okRead) throw new HttpError(403, "Warehouse accounts can use Inventory and Shipping only.");
+      if (write && !okWrite) throw new HttpError(403, "Warehouse accounts can't change this.");
+      if (write && /\/step$/.test(path)) {
+        const peek = await request.clone().json<any>().catch(() => ({}));
+        if (!WAREHOUSE_ACTIONS.has(peek.action)) throw new HttpError(403, "Only a manager or admin can do this step (it involves Amazon fees).");
+      }
+      if (method === "DELETE") throw new HttpError(403, "Warehouse accounts can't delete.");
+    }
     const admin = () => { if (me.role !== "admin") throw new HttpError(403, "Admins only."); };
     const who = me.email;
     const list = (s: string | null) => (s ? s.split(",").map((x) => x.trim()).filter(Boolean) : null);
@@ -691,11 +703,22 @@ export class Store extends DurableObject {
     }
     if (path === "/api/ship/plans" && method === "POST") {
       const b = await body();
-      const id = createDraft(this, b.name, b.items || [], who);
+      let items = b.items || [];
+      if (b.text) { const r = parseLines(this, b.text); if (r.bad.length) throw new HttpError(400, `Fix these lines first: ${r.bad.map((x) => `"${x.line}" (${x.reason})`).join("; ")}`); items = r.items; }
+      const id = createDraft(this, b.name, items, who);
       this.audit(who, "ship.create-draft", { id, items: (b.items || []).length });
       return { ok: true, id };
     }
     if (path === "/api/ship/address") return (await defaultAddress(this)) || {};
+    if (path === "/api/ship/defaults") {
+      return { address: (await defaultAddress(this)) || null, contact: this.setting("freight_contact", null), target: { ...DEFAULT_TARGET, ...this.setting("ship_target", {}) } };
+    }
+    if (path === "/api/ship/parse" && method === "POST") {
+      const b = await body();
+      const r = parseLines(this, b.text || "");
+      const info = r.items.map((it) => ({ ...it, ...(this.one(`SELECT p.title, p.asin, p.fnsku, p.image, i.fulfillable FROM products p LEFT JOIN inventory i ON i.sku=p.sku WHERE p.sku=?`, it.sku) || {}) }));
+      return { items: info, bad: r.bad };
+    }
     if (path === "/api/labels/units") {
       return unitLabels(this, [{ sku: q.get("sku") || "", qty: Number(q.get("qty") || 1) }], q.get("type") || "letter");
     }
@@ -738,7 +761,7 @@ export class Store extends DurableObject {
         const list = p.items.filter((i: any) => !only || i.sku === only).map((i: any) => ({ sku: i.sku, qty: Number(q.get("qty")) || i.qty }));
         return unitLabels(this, list, q.get("type") || "letter");
       }
-      if (sub === "box-labels") return boxLabels(this, getPlan(this, id), q.get("shipmentId") || "", q.get("pageType") || "PackageLabel_Letter_2");
+      if (sub === "labels") return shipmentLabels(this, getPlan(this, id), q.get("shipmentId") || "", q.get("kind") || "box2");
     }
 
     // ----- system / settings -----

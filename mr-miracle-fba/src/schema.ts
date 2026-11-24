@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS inv_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, sku
   created_by TEXT, created_at INTEGER);
 CREATE TABLE IF NOT EXISTS ship_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, status TEXT, inbound_plan_id TEXT, address TEXT,
   data TEXT, last_error TEXT, created_by TEXT, created_at INTEGER, updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS box_specs (sku TEXT PRIMARY KEY, units_per_box INTEGER, length REAL, width REAL, height REAL, weight REAL, updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS ship_items (plan_id INTEGER, sku TEXT, asin TEXT, fnsku TEXT, qty INTEGER, PRIMARY KEY (plan_id, sku));
 CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, area TEXT, msg TEXT);
 CREATE TABLE IF NOT EXISTS email_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, kind TEXT, subject TEXT, status TEXT, error TEXT);

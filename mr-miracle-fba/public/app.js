@@ -74,7 +74,9 @@ function modal(html, wide = false) {
   bg.innerHTML = `<div class="modal ${wide ? "wide" : ""}">${html}</div>`;
   bg.addEventListener("click", (e) => { if (e.target === bg) bg.remove(); });
   document.body.appendChild(bg);
-  const close = () => bg.remove();
+  const onKey = (e) => { if (e.key === "Escape" && !bg.querySelector(".spinner")) close(); };
+  const close = () => { bg.remove(); document.removeEventListener("keydown", onKey); };
+  document.addEventListener("keydown", onKey);
   $$("[data-close]", bg).forEach((b) => b.addEventListener("click", close));
   return { el: $(".modal", bg), close };
 }
@@ -247,7 +249,7 @@ function shell() {
   $("#root").innerHTML = `<div class="app">
     <aside class="side" id="side">
       <div class="logo"><div class="mark">MM</div><div><div class="t1">Mr Miracle</div><div class="t2">FBA System</div></div></div>
-      <nav class="nav">${NAV.filter((n) => !n[3] || state.me.role === n[3]).map((n) => n[0] === "sec"
+      <nav class="nav">${(state.me.role === "warehouse" ? [["sec", "FBA"], ["inventory", "Inventory status", "inv"], ["shipping", "Shipping", "truck"]] : NAV).filter((n) => !n[3] || state.me.role === n[3]).map((n) => n[0] === "sec"
         ? `<div class="sec">${n[1]}</div>`
         : `<a href="#/${n[0]}" data-r="${n[0]}"><svg viewBox="0 0 24 24" fill="currentColor">${ICONS[n[2]]}</svg>${n[1]}</a>`).join("")}</nav>
       <div class="who"><div><b>${esc(state.me.name || state.me.email)}</b></div><div style="opacity:.7">${esc(state.me.email)} · ${state.me.role}</div>
@@ -283,12 +285,14 @@ const canEdit = () => state.me && state.me.role !== "viewer";
 
 async function route() {
   if (!state.me) return;
-  const r = (location.hash.replace(/^#\/?/, "").split("?")[0] || "dashboard");
+  let r = (location.hash.replace(/^#\/?/, "").split("?")[0] || (state.me.role === "warehouse" ? "shipping" : "dashboard"));
+  if (state.me.role === "warehouse" && !["inventory", "shipping"].includes(r)) r = "shipping";
   state.route = r;
   $$(".nav a").forEach((a) => a.classList.toggle("active", a.dataset.r === r));
   $("#side").classList.remove("open");
   const main = $("#main");
   charts.forEach((c) => c.destroy()); charts.clear();
+  $$(".modal-bg").forEach((m) => { if (!m.querySelector(".spinner")) m.remove(); });
   main.innerHTML = `<div class="loading"><span class="spinner"></span></div>`;
   const page = PAGES[r] || PAGES.dashboard;
   try { await page(main, new URLSearchParams(location.hash.split("?")[1] || "")); }
@@ -662,7 +666,7 @@ PAGES.inventory = async (el, params) => {
   $("#sendclear").onclick = () => { send.clear(); updSend(); draw(); };
   $("#sendgo").onclick = async () => {
     try {
-      const r = await api("POST", "/ship/plans", { name: `Send list ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}`, items: [...send].map(([sku, qty]) => ({ sku, qty })) });
+      const r = await api("POST", "/ship/plans", { name: `Shipment ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}`, items: [...send].map(([sku, qty]) => ({ sku, qty })) });
       location.hash = "#/shipping?id=" + r.id;
     } catch (e) { toast(e.message, true); }
   };
@@ -711,7 +715,7 @@ PAGES.inventory = async (el, params) => {
     if (term) rows = rows.filter((r) => (r.sku + r.asin + r.title + r.fnsku).toLowerCase().includes(term));
     $("#body").innerHTML = `<div class="card flush" id="tbl"></div>`;
     table($("#tbl"), [
-      { k: "send", l: canEdit() ? `<span title="Tick to add to a send list">Send</span>` : "", noSort: 1, f: (r) => canEdit() && !r.discontinued ? `<label class="chk"><input type="checkbox" data-send="${esc(r.sku)}" ${send.has(r.sku) ? "checked" : ""}></label> <input class="w-num" style="width:64px" type="number" min="0" data-sq="${esc(r.sku)}" value="${send.get(r.sku) ?? (r.toShip || "")}" placeholder="qty">` : "" },
+      { k: "send", l: canShip() ? `<span title="Tick to add to a send list">Send</span>` : "", noSort: 1, f: (r) => canShip() && !r.discontinued ? `<label class="chk"><input type="checkbox" data-send="${esc(r.sku)}" ${send.has(r.sku) ? "checked" : ""}></label> <input class="w-num" style="width:64px" type="number" min="0" data-sq="${esc(r.sku)}" value="${send.get(r.sku) ?? (r.toShip || "")}" placeholder="qty">` : "" },
       { k: "sku", l: "Product", f: (r) => prodCell(r), cls: "prod", sort: (r) => r.sku.toLowerCase() },
       { k: "state", l: "Status", f: (r) => { const [l, c] = STATE[r.discontinued ? "discontinued" : r.state] || STATE.ok; return `<span class="badge ${c}">${l}</span>`; } },
       { k: "toShip", l: "Qty to ship", n: 1, f: (r) => r.toShip ? `<span class="pill info"><b>${fmtN(r.toShip)}</b></span>` : `<span class="faint">–</span>` },
@@ -761,7 +765,7 @@ PAGES.inventory = async (el, params) => {
         $$("[data-disc]", tEl).forEach((i) => i.onchange = () => { d.rows.find((x) => x.sku === i.dataset.disc).discontinued = i.checked; save(i.dataset.disc, { discontinued: i.checked }); counts(); });
       },
     });
-    if (canEdit() && f === "low") {
+    if (canShip() && f === "low") {
       const b = document.createElement("div");
       b.className = "row"; b.style.margin = "0 0 10px";
       b.innerHTML = `<button id="selall">Select all ${rows.length} with their qty to ship</button>`;
@@ -1222,69 +1226,95 @@ PAGES.sellers = async (el) => {
   load();
 };
 
-// ---------------- shipping (FBA inbound) ----------------
-const SHIP_STEPS = [["items", "1. Products"], ["create", "2. Create in Amazon"], ["packing", "3. Packing"], ["boxes", "4. Boxes"], ["placement", "5. Warehouses & fees"], ["transport", "6. Carrier"], ["labels", "7. Labels & ship"]];
-const STATUS_STEP = { draft: "items", creating: "create", created: "packing", packing: "packing", boxes: "boxes", placement: "placement", transport: "transport", confirmed: "labels", cancelled: "labels" };
-const STATUS_LABEL = { draft: ["Send list", ""], creating: ["Creating…", "info"], created: ["Created", "info"], packing: ["Packing", "info"], boxes: ["Enter boxes", "warn"], placement: ["Choose warehouses", "warn"], transport: ["Choose carrier", "warn"], confirmed: ["Ready to ship", "good"], cancelled: ["Cancelled", "bad"] };
+// ---------------- shipping (FBA inbound, "plan then pack") ----------------
+const SHIP_STEPS = [["plan", "1. Plan"], ["find", "2. Find warehouse"], ["boxes", "3. Boxes & labels"], ["freight", "4. Freight"], ["done", "5. Ready"]];
+const STATUS_STEP = { draft: "plan", creating: "plan", targeting: "find", found: "find", boxes: "boxes", freight: "freight", confirmed: "done", cancelled: "done" };
+const STATUS_LABEL = { draft: ["Draft", ""], creating: ["Creating…", "info"], targeting: ["Looking for warehouse", "info"], found: ["Warehouse found!", "good"],
+  boxes: ["Enter boxes", "warn"], freight: ["Book freight", "warn"], confirmed: ["Ready to ship", "good"], cancelled: ["Cancelled", "bad"] };
+const canSpend = () => state.me && ["admin", "manager"].includes(state.me.role);
+const canShip = () => state.me && ["admin", "manager", "warehouse"].includes(state.me.role);
+const optFee = (o) => (o.fees || []).reduce((s, f) => s + (f.value?.amount || 0), 0) - (o.discounts || []).reduce((s, f) => s + (f.value?.amount || 0), 0);
 
 async function shipStep(id, action, args = {}) {
-  const m = modal(`<div class="row" style="gap:12px"><span class="spinner"></span><div><b>Working with Amazon…</b><div class="small muted">This can take up to a minute. Please keep this page open.</div></div></div>`);
+  const m = modal(`<div class="row" style="gap:12px"><span class="spinner"></span><div><b>Working with Amazon…</b><div class="small muted">This can take a minute or two. Please keep this page open.</div></div></div>`);
   try { return await api("POST", `/ship/plans/${id}/step`, { action, ...args }); }
   finally { m.close(); }
+}
+
+function pasteBox(onDone, title = "New shipment", button = "Create shipment") {
+  const m = modal(`<h2>${title}</h2>
+    <p class="small muted">Paste one product per line: <span class="mono">SKU [tab] quantity</span> — straight from a spreadsheet works. ASIN or FNSKU instead of SKU is fine too.</p>
+    <textarea id="pt" rows="10" class="mono" placeholder="MrM 12OZ Foam Cups 100 PK w Lids&#9;180"></textarea>
+    <div id="pv" style="margin-top:10px"></div>
+    <div class="foot"><button data-close>Cancel</button><button id="pchk">Check</button><button class="primary" id="pok" disabled>${button}</button></div>`, true);
+  let parsed = null;
+  const check = async () => {
+    parsed = await api("POST", "/ship/parse", { text: $("#pt", m.el).value });
+    const units = parsed.items.reduce((s, x) => s + x.qty, 0);
+    $("#pv", m.el).innerHTML = `${parsed.bad.length ? `<div class="banner bad"><div class="txt"><b>${parsed.bad.length} line(s) need fixing:</b><br>${parsed.bad.map((b) => `<span class="mono">${esc(b.line)}</span> — ${esc(b.reason)}`).join("<br>")}</div></div>` : ""}
+      ${parsed.items.length ? `<div class="small"><b class="good">✓ ${parsed.items.length} products · ${fmtN(units)} units</b></div><div class="tbl-wrap" style="max-height:260px"><table class="t"><thead><tr><th>SKU</th><th>ASIN</th><th>FNSKU</th><th class="n">Qty</th><th class="n">Sellable in FBA</th></tr></thead><tbody>
+      ${parsed.items.map((x) => `<tr><td class="mono">${esc(x.sku)}</td><td>${esc(x.asin || "")}</td><td class="mono">${esc(x.fnsku || "")}</td><td class="n"><b>${fmtN(x.qty)}</b></td><td class="n">${fmtN(x.fulfillable)}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
+    $("#pok", m.el).disabled = !parsed.items.length || parsed.bad.length > 0;
+  };
+  $("#pchk", m.el).onclick = () => check().catch((e) => toast(e.message, true));
+  $("#pt", m.el).addEventListener("input", debounce(() => check().catch(() => {}), 600));
+  $("#pok", m.el).onclick = async () => { try { await onDone(parsed.items); m.close(); } catch (e) { toast(e.message, true); } };
 }
 
 PAGES.shipping = async (el, params) => {
   const id = params.get("id");
   if (id) return shipPlanPage(el, Number(id));
   const plans = await GET("/ship/plans");
-  el.innerHTML = header("Shipping", "Send lists and FBA shipments", canEdit() ? `<button class="primary" id="new">New send list</button>` : "") + `
-    <div class="card small muted">Pick products on <a href="#/inventory?f=low">Inventory → Needs shipping</a> (tick <b>Send</b>), or start a new send list here. A send list becomes an FBA shipment step by step: Amazon chooses the warehouses, you enter the boxes, pick a carrier, then print unit and box labels.</div>
+  el.innerHTML = header("Shipping", "FBA shipments from your warehouse", canShip() ? `<button class="primary" id="new">New shipment</button>` : "") + `
+    <div class="card small muted">Paste <b>SKU [tab] qty</b> lines or tick <b>Send</b> on <a href="#/inventory?f=low">Inventory</a>. The system creates the plan in Amazon and <b>keeps checking until your target warehouse (default HEA2) is offered</b>, emails you, then you confirm, enter boxes, print labels and book Amazon Freight.</div>
     <div class="card flush" id="t"></div>`;
   table($("#t"), [
     { k: "id", l: "#", n: 1, f: (p) => p.id },
-    { k: "name", l: "Name", f: (p) => `<a href="#/shipping?id=${p.id}"><b>${esc(p.name)}</b></a>${p.last_error ? `<div class="small bad">needs attention</div>` : ""}` },
+    { k: "name", l: "Shipment", f: (p) => `<a href="#/shipping?id=${p.id}"><b>${esc(p.name)}</b></a>${p.last_error ? `<div class="small bad">needs attention</div>` : ""}` },
     { k: "status", l: "Status", f: (p) => { const [l, c] = STATUS_LABEL[p.status] || [p.status, ""]; return `<span class="badge ${c}">${l}</span>`; } },
     { k: "skus", l: "Products", n: 1, f: (p) => fmtN(p.skus) },
     { k: "units", l: "Units", n: 1, f: (p) => fmtN(p.units) },
-    { k: "created_by", l: "Created by", f: (p) => `<span class="small">${esc(p.created_by || "")}</span>` },
+    { k: "created_by", l: "By", f: (p) => `<span class="small">${esc(p.created_by || "")}</span>` },
     { k: "updated_at", l: "Updated", f: (p) => `<span class="small">${ago(p.updated_at)}</span>` },
-  ], plans, { sort: "id", tall: false, empty: "No send lists yet." });
-  if (canEdit()) $("#new").onclick = async () => {
-    const m = modal(`<h2>New send list</h2><div class="f">First product<div id="np"></div></div><label class="f" style="margin-top:10px">Quantity<input type="number" id="nq" class="w-num" min="1"></label>
-      <p class="small muted">You can add more products on the next screen.</p>
-      <div class="foot"><button data-close>Cancel</button><button class="primary" id="nok">Create</button></div>`);
-    let sku = null;
-    await picker($("#np", m.el), { single: true, placeholder: "Search SKU, ASIN or title…", onChange: (x) => sku = x[0] });
-    $("#nok", m.el).onclick = async () => {
-      try { const r = await api("POST", "/ship/plans", { items: [{ sku, qty: Number($("#nq", m.el).value) }] }); m.close(); location.hash = "#/shipping?id=" + r.id; }
-      catch (e) { toast(e.message, true); }
-    };
-  };
+  ], plans, { sort: "id", tall: false, empty: "No shipments yet." });
+  if (canShip()) $("#new").onclick = () => pasteBox(async (items) => {
+    const r = await api("POST", "/ship/plans", { name: `Shipment ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}`, items });
+    location.hash = "#/shipping?id=" + r.id;
+  });
 };
 
 async function shipPlanPage(el, id) {
   let p = await GET(`/ship/plans/${id}`);
+  const defaults = await GET("/ship/defaults").catch(() => ({}));
+  const run = async (action, args, confirmTitle, confirmHtml, okLabel) => {
+    if (confirmTitle && !await confirmBox(confirmTitle, confirmHtml, okLabel)) return;
+    try { p = await shipStep(id, action, args); toast("Done"); }
+    catch (e) { toast(e.message.split("\n")[0], true); p = await GET(`/ship/plans/${id}`); }
+    render();
+  };
+  const labelUrl = (sid, kind) => `/api/ship/plans/${id}/labels?shipmentId=${encodeURIComponent(sid)}&kind=${kind}`;
   const render = async () => {
-    const cur = STATUS_STEP[p.status] || "items";
+    const cur = STATUS_STEP[p.status] || "plan";
     const curIdx = SHIP_STEPS.findIndex(([k]) => k === cur);
     const [sl, sc] = STATUS_LABEL[p.status] || [p.status, ""];
-    const editable = p.status === "draft" && canEdit();
+    const d = p.data || {};
     const units = p.items.reduce((s, i) => s + i.qty, 0);
-    el.innerHTML = header(esc(p.name), `<span class="badge ${sc}">${sl}</span> · ${p.items.length} products · ${fmtN(units)} units${p.inbound_plan_id ? ` · <a target="_blank" rel="noopener" href="https://sellercentral.amazon.com/fba/sendtoamazon?wf=${encodeURIComponent(p.inbound_plan_id)}">open in Seller Central</a>` : ""}`,
-      `<a class="btn" href="#/shipping">← All shipments</a><button id="pick">Print pick list</button>
-       <div class="seg"><button id="ul-letter" title="30 labels per US Letter sheet">Unit labels (Letter)</button><button id="ul-thermal" title="2.25 × 1.25 in thermal">Thermal</button></div>
-       ${canEdit() && p.status !== "cancelled" && p.inbound_plan_id ? `<button class="danger" id="cancel">Cancel in Amazon</button>` : ""}
-       ${canEdit() && (p.status === "draft" || p.status === "cancelled") ? `<button class="danger" id="del">Delete</button>` : ""}`) + `
+    el.innerHTML = header(esc(p.name), `<span class="badge ${sc}">${sl}</span> · ${p.items.length} products · ${fmtN(units)} units · target <b>${esc(d.target?.warehouse || "HEA2")}</b>${p.inbound_plan_id ? ` · <a target="_blank" rel="noopener" href="https://sellercentral.amazon.com/fba/sendtoamazon?wf=${encodeURIComponent(p.inbound_plan_id)}">Seller Central</a>` : ""}`,
+      `<a class="btn" href="#/shipping">← All shipments</a><button id="pick">Pick list</button><button id="ul">FNSKU labels (Letter)</button>
+       ${canSpend() && p.status !== "cancelled" && p.inbound_plan_id ? `<button class="danger" id="cancel">Cancel in Amazon</button>` : ""}
+       ${canSpend() && (p.status === "draft" || p.status === "cancelled") ? `<button class="danger" id="del">Delete</button>` : ""}`) + `
       <div class="steps">${SHIP_STEPS.map(([k, l], i) => `<span class="st ${p.status === "cancelled" ? "" : i < curIdx || p.status === "confirmed" ? "done" : i === curIdx ? "cur" : ""}">${l}</span>`).join("")}</div>
       ${p.last_error ? `<div class="banner bad"><div class="txt" style="white-space:pre-wrap"><b>Amazon reported a problem:</b>\n${esc(p.last_error)}</div></div>` : ""}
       <div id="stepbox"></div>
-      <div class="card flush"><div class="card-h"><h2>Products in this shipment</h2>${editable ? `<div class="row"><div id="addpk" style="min-width:280px"></div><input type="number" id="addq" class="w-num" placeholder="qty" min="1"><button id="add">Add</button></div>` : ""}</div><div id="items"></div></div>`;
+      <div class="card flush"><div class="card-h"><h2>Products</h2>${p.status === "draft" && canShip() ? `<button id="paste">Paste more lines</button>` : ""}</div><div id="items"></div></div>`;
+    const editable = p.status === "draft" && canShip();
     table($("#items"), [
       { k: "sku", l: "Product", f: (i) => prodCell({ ...i, asin: i.asin || i.cur_asin }), cls: "prod" },
       { k: "fnsku", l: "FNSKU", f: (i) => `<span class="mono">${esc(i.fnsku || i.cur_fnsku || "")}</span>` },
-      { k: "fulfillable", l: "Sellable now", n: 1, f: (i) => fmtN(i.fulfillable) },
-      { k: "qty", l: "Qty to send", n: 1, f: (i) => editable ? `<input class="w-num" type="number" min="0" data-q="${esc(i.sku)}" value="${i.qty}">` : `<b>${fmtN(i.qty)}</b>` },
-      { k: "lab", l: "Labels", noSort: 1, f: (i) => `<button class="sm" data-lab="${esc(i.sku)}">Print ${fmtN(i.qty)}</button>` },
+      { k: "fulfillable", l: "Sellable in FBA", n: 1, f: (i) => fmtN(i.fulfillable) },
+      { k: "box", l: "Usual box", f: (i) => i.units_per_box ? `<span class="small">${i.units_per_box}/box · ${i.length}×${i.width}×${i.height} in · ${i.weight} lb</span>` : `<span class="faint small">—</span>` },
+      { k: "qty", l: "Qty", n: 1, f: (i) => editable ? `<input class="w-num" type="number" min="0" data-q="${esc(i.sku)}" value="${i.qty}">` : `<b>${fmtN(i.qty)}</b>` },
+      { k: "lab", l: "FNSKU labels", noSort: 1, f: (i) => `<button class="sm" data-lab="${esc(i.sku)}">Print ${fmtN(i.qty)}</button>` },
       { k: "x", l: "", noSort: 1, f: (i) => editable ? `<button class="sm danger" data-rm="${esc(i.sku)}">Remove</button>` : "" },
     ], p.items, {
       sort: "sku", dir: 1, tall: false, after: (t) => {
@@ -1294,144 +1324,205 @@ async function shipPlanPage(el, id) {
       },
     });
     const saveItems = async (items) => { try { p = await api("PUT", `/ship/plans/${id}/items`, { items }); render(); } catch (e) { toast(e.message, true); } };
-    if (editable) {
-      let addSku = null;
-      await picker($("#addpk"), { single: true, placeholder: "Add a product…", onChange: (x) => addSku = x[0] });
-      $("#add").onclick = () => {
-        const q = Number($("#addq").value);
-        if (!addSku || !(q > 0)) return toast("Pick a product and quantity.", true);
-        const items = p.items.filter((x) => x.sku !== addSku).map((x) => ({ sku: x.sku, qty: x.qty }));
-        items.push({ sku: addSku, qty: q }); saveItems(items);
-      };
-    }
-    $("#ul-letter").onclick = () => window.open(`/api/ship/plans/${id}/unit-labels?type=letter`, "_blank");
-    $("#ul-thermal").onclick = () => window.open(`/api/ship/plans/${id}/unit-labels?type=thermal`, "_blank");
+    if ($("#paste")) $("#paste").onclick = () => pasteBox(async (add) => {
+      const m = new Map(p.items.map((x) => [x.sku, x.qty]));
+      for (const a of add) m.set(a.sku, (m.get(a.sku) || 0) + a.qty);
+      await saveItems([...m].map(([sku, qty]) => ({ sku, qty })));
+    }, "Add products", "Add to shipment");
+    $("#ul").onclick = () => window.open(`/api/ship/plans/${id}/unit-labels?type=letter`, "_blank");
     $("#pick").onclick = () => {
       const w = window.open("", "_blank");
       w.document.write(`<!doctype html><title>Pick list – ${esc(p.name)}</title><style>body{font:13px Arial;margin:24px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:6px;text-align:left}td.n{text-align:right;font-weight:bold;font-size:15px}.b{width:24px}</style>
         <h2>${esc(p.name)}</h2><p>${p.items.length} products · ${fmtN(units)} units · printed ${new Date().toLocaleString()}</p>
-        <table><tr><th class="b">✓</th><th>SKU</th><th>ASIN</th><th>FNSKU</th><th>Product</th><th>Qty</th></tr>
-        ${p.items.map((i) => `<tr><td></td><td>${esc(i.sku)}</td><td>${esc(i.asin || "")}</td><td>${esc(i.fnsku || "")}</td><td>${esc(i.title || "")}</td><td class="n">${i.qty}</td></tr>`).join("")}
+        <table><tr><th class="b">✓</th><th>SKU</th><th>ASIN</th><th>FNSKU</th><th>Product</th><th>Usual box</th><th>Qty</th></tr>
+        ${p.items.map((i) => `<tr><td></td><td>${esc(i.sku)}</td><td>${esc(i.asin || "")}</td><td>${esc(i.fnsku || "")}</td><td>${esc(i.title || "")}</td><td>${i.units_per_box ? `${i.units_per_box}/box` : ""}</td><td class="n">${i.qty}</td></tr>`).join("")}
         </table><script>window.print()<\/script>`);
       w.document.close();
     };
-    if ($("#cancel")) $("#cancel").onclick = async () => {
-      if (!await confirmBox("Cancel this shipment in Amazon?", "The inbound plan and its shipments are cancelled in Seller Central. This can't be undone.", "Cancel shipment")) return;
-      try { p = await shipStep(id, "cancel"); render(); } catch (e) { toast(e.message, true); p = await GET(`/ship/plans/${id}`); render(); }
-    };
+    if ($("#cancel")) $("#cancel").onclick = () => run("cancel", {}, "Cancel this shipment in Amazon?", "The inbound plan and its shipments are cancelled in Seller Central. This can't be undone.", "Cancel shipment");
     if ($("#del")) $("#del").onclick = async () => {
-      if (!await confirmBox("Delete this send list?", "It's removed from this system.", "Delete")) return;
+      if (!await confirmBox("Delete this shipment?", "It's removed from this system.", "Delete")) return;
       await api("DELETE", `/ship/plans/${id}`); location.hash = "#/shipping";
     };
-    await drawStep();
-  };
-  const run = async (action, args, confirmTitle, confirmHtml, okLabel) => {
-    if (confirmTitle && !await confirmBox(confirmTitle, confirmHtml, okLabel)) return;
-    try { p = await shipStep(id, action, args); toast("Done"); }
-    catch (e) { toast(e.message.split("\n")[0], true); p = await GET(`/ship/plans/${id}`); }
-    render();
-  };
-  const drawStep = async () => {
     const box = $("#stepbox");
-    const d = p.data || {};
-    if (!canEdit() && p.status !== "confirmed") { box.innerHTML = ""; return; }
-    if (p.status === "draft" || p.status === "creating") {
-      const a = p.address || await GET("/ship/address");
-      const F = [["name", "Name / contact"], ["companyName", "Company"], ["addressLine1", "Street"], ["addressLine2", "Street line 2"], ["city", "City"], ["stateOrProvinceCode", "State (2 letters)"], ["postalCode", "ZIP"], ["phoneNumber", "Phone"], ["email", "Email"]];
-      box.innerHTML = `<div class="card"><h2>Ship from</h2><div class="form-grid">${F.map(([k, l]) => `<label class="f">${l}<input data-a="${k}" value="${esc(a?.[k] || "")}"></label>`).join("")}</div>
-        <p class="small muted">Unit labels: products with an X0… FNSKU get Amazon labels from you; products sold under the manufacturer barcode don't. Prep (poly bags etc.) is taken from Amazon's prep settings for each product.</p>
-        <div class="row"><button class="primary" id="create">Create shipment plan in Amazon →</button><span class="small muted">This creates a draft "Send to Amazon" plan. Nothing is charged at this step.</span></div></div>`;
-      $("#create").onclick = () => {
-        const address = Object.fromEntries($$("[data-a]").map((i) => [i.dataset.a, i.value.trim()]));
-        address.countryCode = "US";
-        run("create", { address });
-      };
-    } else if (p.status === "created" || p.status === "packing") {
-      const opts = d.packingOptions || [];
-      box.innerHTML = `<div class="card"><h2>Packing options</h2>${opts.length ? `<p class="small muted">Amazon split the products into packing groups (products in a group can share boxes).</p>
-        ${opts.map((o, i) => `<label class="chk" style="display:flex;margin:8px 0"><input type="radio" name="po" value="${esc(o.packingOptionId)}" ${i === 0 ? "checked" : ""}> ${(o.packingGroups || []).length} packing group(s) · fees ${fmt$((o.fees || []).reduce((s, f) => s + (f.value?.amount || 0), 0))} ${(o.discounts || []).length ? "· discounts available" : ""}</label>`).join("")}
-        <button class="primary" id="pc">Use this packing option →</button>` : `<button class="primary" id="pg">Get packing options →</button>`}</div>`;
-      if ($("#pg")) $("#pg").onclick = () => run("packing_generate");
-      if ($("#pc")) $("#pc").onclick = () => run("packing_confirm", { packingOptionId: $("input[name=po]:checked").value });
-    } else if (p.status === "boxes") {
-      drawBoxes(box, d);
-    } else if (p.status === "placement") {
-      const opts = d.placementOptions || [];
-      const fee = (o) => (o.fees || []).reduce((s, f) => s + (f.value?.amount || 0), 0) - (o.discounts || []).reduce((s, f) => s + (f.value?.amount || 0), 0);
-      box.innerHTML = `<div class="card"><h2>Warehouses & placement fee</h2>${opts.length ? `<p class="small muted">Amazon offers ways to split the shipment between warehouses. Fewer warehouses usually costs a higher placement fee.</p>
-        ${opts.map((o, i) => `<label class="card" style="display:block;cursor:pointer;margin:8px 0;padding:12px"><div class="row between"><div class="row"><input type="radio" name="pl" value="${esc(o.placementOptionId)}" ${i === 0 ? "checked" : ""}>
-          <b>${(o.shipmentIds || []).length} shipment${(o.shipmentIds || []).length === 1 ? "" : "s"}</b></div><b class="${fee(o) > 0 ? "warn" : "good"}">Placement fee ${fmt$(fee(o))}</b></div>
-          <div class="small muted" style="margin-top:6px">${(o.destinations || []).map((x) => `${esc(x.warehouse || "?")} ${esc(x.city || "")} ${esc(x.state || "")}${x.units ? ` — ${fmtN(x.units)} units` : ""}`).join(" · ")}${o.expiration ? ` · offer expires ${dt(Date.parse(o.expiration))}` : ""}</div></label>`).join("")}
-        <button class="primary" id="plc">Confirm warehouses →</button>` : `<button class="primary" id="plg">Get warehouse options →</button>`}</div>`;
-      if ($("#plg")) $("#plg").onclick = () => run("placement_generate");
-      if ($("#plc")) $("#plc").onclick = () => {
-        const o = opts.find((x) => x.placementOptionId === $("input[name=pl]:checked").value);
-        run("placement_confirm", { placementOptionId: o.placementOptionId }, "Confirm warehouses?",
-          `<p>Amazon will charge a placement fee of <b>${fmt$(fee(o))}</b> for this option, and it creates ${(o.shipmentIds || []).length} shipment(s). This can't be changed afterwards.</p>`, `Confirm — ${fmt$(fee(o))}`);
-      };
-    } else if (p.status === "transport") {
-      const sh = d.shipments || [];
-      const have = sh.some((s) => (s.transportOptions || []).length);
-      box.innerHTML = `<div class="card"><h2>Carrier</h2>
-        <div class="row" style="margin-bottom:10px"><label class="f">Ready to ship on<input type="date" id="rd" value="${d.readyDate || addDays(todayLA(), 1)}"></label><button id="tg" ${have ? "" : 'class="primary"'}>${have ? "Refresh carrier options" : "Get carrier options →"}</button></div>
-        ${sh.map((s) => `<div class="card" style="padding:12px"><b>${esc(s.warehouse || s.shipmentId)}</b> <span class="small muted">${esc(s.city || "")} ${esc(s.state || "")}${s.units ? ` · ${fmtN(s.units)} units` : ""}</span>
-          ${(s.transportOptions || []).map((o, i) => `<label class="chk" style="display:flex;margin:6px 0"><input type="radio" name="t-${esc(s.shipmentId)}" value="${esc(o.transportationOptionId)}" ${i === 0 ? "checked" : ""}>
-            <b>${o.solution === "AMAZON_PARTNERED_CARRIER" ? "Amazon partnered carrier" : "Your own carrier"}</b> · ${esc(o.carrier || "")} · ${o.mode === "GROUND_SMALL_PARCEL" ? "small parcel (boxes)" : esc((o.mode || "").toLowerCase().replace(/_/g, " "))} · <b>${o.cost !== null ? fmt$(o.cost) : "no quote"}</b></label>`).join("") || `<div class="small muted">No options yet.</div>`}</div>`).join("")}
-        ${have ? `<button class="primary" id="tc">Confirm carriers →</button>` : ""}</div>`;
-      $("#tg").onclick = () => run("transport_generate", { readyDate: $("#rd").value });
-      if ($("#tc")) $("#tc").onclick = () => {
-        const selections = {}; let total = 0;
-        for (const s of sh) {
-          const v = $(`input[name="t-${CSS.escape(s.shipmentId)}"]:checked`)?.value;
-          selections[s.shipmentId] = v;
-          total += (s.transportOptions || []).find((o) => o.transportationOptionId === v)?.cost || 0;
-        }
-        run("transport_confirm", { selections }, "Confirm carriers?", `<p>Shipping charges of <b>${fmt$(total)}</b> will apply (Amazon partnered carrier charges are billed to your seller account). After this the shipment is final and labels can be printed.</p>`, `Confirm — ${fmt$(total)}`);
-      };
-    } else if (p.status === "confirmed" || p.status === "cancelled") {
-      const sh = d.shipments || [];
-      box.innerHTML = `<div class="card"><div class="card-h"><h2>${p.status === "cancelled" ? "Cancelled" : "Ready to ship"}</h2>${p.inbound_plan_id ? `<button id="rf">Refresh from Amazon</button>` : ""}</div>
-        ${sh.map((s) => `<div class="card" style="padding:12px"><div class="row between"><div><b>${esc(s.confirmationId || s.shipmentId)}</b> → <b>${esc(s.warehouse || "")}</b> <span class="small muted">${esc(s.city || "")} ${esc(s.state || "")} · ${s.boxCount ? `${s.boxCount} boxes` : ""} ${s.status ? "· " + esc(s.status) : ""}</span></div>
-          ${p.status === "confirmed" ? `<div class="row"><span class="small muted">Box labels:</span>
-            <button class="sm" data-bl="${esc(s.shipmentId)}" data-pt="PackageLabel_Letter_2">Letter (2 per page)</button>
-            <button class="sm" data-bl="${esc(s.shipmentId)}" data-pt="PackageLabel_Letter_6">Letter (6 per page)</button>
-            <button class="sm" data-bl="${esc(s.shipmentId)}" data-pt="PackageLabel_Thermal">Thermal 4×6</button></div>` : ""}</div></div>`).join("") || `<p class="muted">No shipments.</p>`}
-        ${p.status === "confirmed" ? `<p class="small muted">Using your own carrier? Add the tracking numbers in Seller Central (link at the top). Amazon partnered carrier labels are included in the box labels.</p>` : ""}</div>`;
-      $$("[data-bl]").forEach((b) => b.onclick = () => window.open(`/api/ship/plans/${id}/box-labels?shipmentId=${encodeURIComponent(b.dataset.bl)}&pageType=${b.dataset.pt}`, "_blank"));
-      if ($("#rf")) $("#rf").onclick = () => run("refresh");
-    }
+    if (p.status === "draft" || p.status === "creating") drawPlan(box, d);
+    else if (p.status === "targeting" || p.status === "found") drawFind(box, d);
+    else if (p.status === "boxes") drawBoxes(box, d);
+    else if (p.status === "freight") drawFreight(box, d);
+    else drawDone(box, d);
   };
+
+  // ---- 1. plan ----
+  const drawPlan = (box, d) => {
+    if (!canSpend()) { box.innerHTML = `<div class="card small muted">A manager or admin sends this to Amazon.</div>`; return; }
+    const a = p.address || defaults.address || {};
+    const t = { ...(defaults.target || {}), ...(d.target || {}) };
+    const F = [["name", "Name / contact"], ["companyName", "Company"], ["addressLine1", "Street"], ["addressLine2", "Street line 2"], ["city", "City"], ["stateOrProvinceCode", "State"], ["postalCode", "ZIP"], ["phoneNumber", "Phone"], ["email", "Email"]];
+    box.innerHTML = `<div class="grid g2">
+      <div class="card"><h2>Target warehouse</h2><div class="form-grid">
+        <label class="f">Warehouse code<input id="tw" value="${esc(t.warehouse || "HEA2")}" style="text-transform:uppercase"></label>
+        <label class="f">Accept<select id="tm"><option value="all" ${t.match !== "partial" ? "selected" : ""}>Everything to this warehouse</option><option value="partial" ${t.match === "partial" ? "selected" : ""}>At least part to this warehouse</option></select></label>
+        <label class="f">Re-check every<select id="th">${[1, 2, 3, 4, 6, 8, 12, 24].map((h) => `<option value="${h}" ${Number(t.everyHours || 2) === h ? "selected" : ""}>${h} hour${h > 1 ? "s" : ""}</option>`).join("")}</select></label>
+        <label class="f">Max placement fee ($, optional)<input id="tf" type="number" step="0.01" value="${t.maxFee ?? ""}"></label></div>
+        <p class="small muted">After the plan is created, the system asks Amazon for warehouse options and keeps asking on this schedule until a matching option appears. Then it emails you. Confirming is always your decision.</p></div>
+      <div class="card"><h2>Ship from</h2><details ${a.addressLine1 ? "" : "open"}><summary class="small">${esc([a.name, a.addressLine1, a.city, a.stateOrProvinceCode, a.postalCode].filter(Boolean).join(", ") || "Enter address")}</summary>
+        <div class="form-grid" style="margin-top:10px">${F.map(([k, l]) => `<label class="f">${l}<input data-a="${k}" value="${esc(a[k] || "")}"></label>`).join("")}</div></details></div></div>
+      <div class="card row between"><span class="small muted">Creates the "Send to Amazon" plan and starts looking for ${esc(t.warehouse || "HEA2")}. Nothing is charged at this step.</span>
+        <button class="primary" id="create">Create in Amazon & find ${esc(t.warehouse || "HEA2")} →</button></div>`;
+    $("#create").onclick = () => {
+      const address = Object.fromEntries($$("[data-a]").map((i) => [i.dataset.a, i.value.trim()]));
+      address.countryCode = "US";
+      const target = { warehouse: $("#tw").value.trim().toUpperCase(), match: $("#tm").value, everyHours: Number($("#th").value), maxFee: $("#tf").value === "" ? null : Number($("#tf").value) };
+      run("create", { address, target });
+    };
+  };
+
+  // ---- 2. find warehouse ----
+  const drawFind = (box, d) => {
+    const t = d.target || {};
+    const opts = (d.placementOptions || []).slice().sort((a, b) => (b.matchesTarget ? 1 : 0) - (a.matchesTarget ? 1 : 0) || optFee(a) - optFee(b));
+    const found = p.status === "found";
+    box.innerHTML = `<div class="card" style="border-color:${found ? "var(--good)" : "var(--line)"}"><div class="row between">
+        <div>${found ? `<h2 class="good" style="margin:0">✓ ${esc(t.warehouse)} is available</h2>` : `<h2 style="margin:0">Looking for ${esc(t.warehouse)}${d.paused ? " (paused)" : ""}</h2>`}
+          <div class="small muted">${t.match === "partial" ? "Accepting options with part of the shipment there" : "Waiting for everything to go there"}${t.maxFee != null ? ` · fee up to ${fmt$(t.maxFee)}` : ""} · checked ${fmtN(d.checks || 0)} time${d.checks === 1 ? "" : "s"}, last ${ago(d.lastCheck)}${!found && d.nextCheck && !d.paused ? ` · next check ${dt(d.nextCheck)}` : ""}</div></div>
+        ${canSpend() ? `<div class="row"><button id="chk">Check now</button><button id="edt">Change target</button>${!found ? `<button id="pause">${d.paused ? "Resume" : "Pause"}</button>` : ""}</div>` : ""}</div>
+      ${(d.history || []).length ? `<div class="small faint" style="margin-top:8px">Recent offers: ${(d.history || []).slice(-6).reverse().map((h) => `${dt(h.at)} → ${esc(h.offered || "?")}${h.match ? " ✓" : ""}`).join(" · ")}</div>` : ""}</div>
+      <div class="card"><h2>Warehouse options from Amazon</h2>
+      ${opts.map((o) => `<div class="card" style="padding:12px;margin:8px 0;${o.matchesTarget ? "border-color:var(--good);box-shadow:inset 4px 0 0 var(--good)" : ""}"><div class="row between">
+          <div><b>${(o.shipmentIds || []).length} shipment${(o.shipmentIds || []).length === 1 ? "" : "s"}</b> ${o.matchesTarget ? `<span class="badge good">matches ${esc(t.warehouse)}</span>` : ""}
+            <div class="small" style="margin-top:4px">${(o.destinations || []).map((x) => `<span class="badge ${String(x.warehouse).toUpperCase() === String(t.warehouse).toUpperCase() ? "good" : ""}">${esc(x.warehouse || "?")}</span> ${esc(x.city || "")} ${esc(x.state || "")}${x.units ? ` — ${fmtN(x.units)} units` : ""}`).join(" &nbsp; ")}</div>
+            ${o.expiration ? `<div class="small faint">offer expires ${dt(Date.parse(o.expiration))}</div>` : ""}</div>
+          <div class="row"><b class="${optFee(o) > 0 ? "warn" : "good"}">Placement fee ${fmt$(optFee(o))}</b>${canSpend() ? `<button class="${o.matchesTarget ? "primary" : ""}" data-conf="${esc(o.placementOptionId)}">Confirm this</button>` : ""}</div></div></div>`).join("") || `<p class="muted">No options yet — press Check now.</p>`}</div>`;
+    if (!canSpend()) return;
+    $("#chk").onclick = () => run("check");
+    if ($("#pause")) $("#pause").onclick = () => run("target", { paused: !d.paused });
+    $("#edt").onclick = () => {
+      const m = modal(`<h2>Target warehouse</h2><div class="form-grid">
+        <label class="f">Warehouse code<input id="tw" value="${esc(t.warehouse)}"></label>
+        <label class="f">Accept<select id="tm"><option value="all">Everything to this warehouse</option><option value="partial" ${t.match === "partial" ? "selected" : ""}>At least part</option></select></label>
+        <label class="f">Re-check every (hours)<input id="th" type="number" min="1" value="${t.everyHours}"></label>
+        <label class="f">Max placement fee ($)<input id="tf" type="number" step="0.01" value="${t.maxFee ?? ""}"></label></div>
+        <div class="foot"><button data-close>Cancel</button><button class="primary" id="ok">Save</button></div>`);
+      $("#ok", m.el).onclick = () => { m.close(); run("target", { target: { warehouse: $("#tw", m.el).value.trim().toUpperCase(), match: $("#tm", m.el).value, everyHours: Number($("#th", m.el).value) || 2, maxFee: $("#tf", m.el).value === "" ? null : Number($("#tf", m.el).value) } }); };
+    };
+    $$("[data-conf]").forEach((b) => b.onclick = () => {
+      const o = opts.find((x) => x.placementOptionId === b.dataset.conf);
+      run("placement_confirm", { placementOptionId: o.placementOptionId }, "Confirm warehouses?",
+        `<p>Ship to: <b>${(o.destinations || []).map((x) => esc(x.warehouse)).join(", ")}</b></p><p>Amazon charges a placement fee of <b>${fmt$(optFee(o))}</b>. This creates the FBA shipment${(o.shipmentIds || []).length > 1 ? "s" : ""} and can't be changed afterwards.</p>`, `Confirm — ${fmt$(optFee(o))}`);
+    });
+  };
+
+  // ---- 3. boxes ----
+  const specs = Object.fromEntries(p.items.map((i) => [i.sku, i]));
   const drawBoxes = (box, d) => {
-    const groups = d.packingGroups || [];
-    const saved = d.boxes || {};
-    // default: one line per product = 1 box holding everything (user edits count / units per box)
+    const shipments = d.shipments || [];
     const lines = {};
-    for (const g of groups) lines[g.packingGroupId] = (saved[g.packingGroupId] || g.items.map((it) => ({ count: 1, length: "", width: "", height: "", weight: "", items: [{ msku: it.msku, qty: it.quantity }] })))
-      .map((l) => ({ ...l, items: g.items.map((it) => ({ msku: it.msku, qty: (l.items.find((x) => x.msku === it.msku) || {}).qty || 0 })) }));
+    for (const s of shipments) {
+      lines[s.shipmentId] = (d.boxes || {})[s.shipmentId] || (s.items || []).flatMap((it) => {
+        const sp = specs[it.msku] || {};
+        const base = { length: sp.length || "", width: sp.width || "", height: sp.height || "", weight: sp.weight || "" };
+        if (sp.units_per_box && it.quantity >= sp.units_per_box) {
+          const full = Math.floor(it.quantity / sp.units_per_box), rest = it.quantity - full * sp.units_per_box;
+          const out = [{ ...base, count: full, items: [{ msku: it.msku, qty: sp.units_per_box }] }];
+          if (rest) out.push({ ...base, count: 1, items: [{ msku: it.msku, qty: rest }] });
+          return out;
+        }
+        return [{ ...base, count: 1, items: [{ msku: it.msku, qty: it.quantity }] }];
+      });
+      // make sure each line lists every product of the shipment (for mixed boxes)
+      lines[s.shipmentId] = lines[s.shipmentId].map((l) => ({ ...l, items: (s.items || []).map((it) => ({ msku: it.msku, qty: (l.items.find((x) => x.msku === it.msku) || {}).qty || 0 })) }));
+    }
     const drawG = () => {
-      box.innerHTML = `<div class="card"><h2>Boxes</h2><p class="small muted">For each box type enter how many identical boxes, the box size (inches), weight (lb) and how many units of each product go in one box. Mixed boxes: put units of several products on the same line. Totals must match the plan.</p>
-        ${groups.map((g, gi) => {
-          const L = lines[g.packingGroupId];
-          const tot = Object.fromEntries(g.items.map((it) => [it.msku, L.reduce((s, l) => s + (Number(l.count) || 0) * (Number(l.items.find((x) => x.msku === it.msku)?.qty) || 0), 0)]));
-          return `<div class="card" style="padding:12px"><h3>Packing group ${gi + 1} <span class="small muted">(${g.items.length} products)</span></h3>
+      box.innerHTML = `<div class="card"><h2>Boxes</h2><p class="small muted">One line per box type: number of identical boxes, size (in), weight (lb) and units of each product in one box. Sizes from last time are filled in. Mixed boxes: put several products on the same line.</p>
+        ${shipments.map((s, si) => {
+          const L = lines[s.shipmentId];
+          const tot = Object.fromEntries((s.items || []).map((it) => [it.msku, L.reduce((acc, l) => acc + (Number(l.count) || 0) * (Number(l.items.find((x) => x.msku === it.msku)?.qty) || 0), 0)]));
+          const boxesN = L.reduce((acc, l) => acc + (Number(l.count) || 0), 0);
+          return `<div class="card" style="padding:12px"><h3>→ ${esc(s.warehouse || s.shipmentId)} <span class="small muted">${esc(s.city || "")} ${esc(s.state || "")} · ${fmtN(boxesN)} boxes</span></h3>
           <div class="box-line small muted"><span># boxes</span><span>Length</span><span>Width</span><span>Height</span><span>Weight lb</span><span>Units per box</span><span></span></div>
           ${L.map((l, li) => `<div class="box-line">
-            <input type="number" min="1" data-g="${gi}" data-l="${li}" data-k="count" value="${l.count}">
-            ${["length", "width", "height", "weight"].map((k) => `<input type="number" step="0.1" min="0" data-g="${gi}" data-l="${li}" data-k="${k}" value="${l[k]}">`).join("")}
-            <div>${l.items.map((it, ii) => `<div class="row" style="gap:6px;margin-bottom:4px"><input class="w-num" style="width:70px" type="number" min="0" data-g="${gi}" data-l="${li}" data-i="${ii}" value="${it.qty || 0}"><span class="small mono">${esc(it.msku)}</span></div>`).join("")}</div>
-            <button class="sm danger" data-rl="${gi}:${li}" title="Remove line">×</button></div>`).join("")}
-          <div class="row" style="margin-top:8px"><button class="sm" data-al="${gi}">+ Add box type</button>
-            <span class="small">${g.items.map((it) => `<span class="badge ${tot[it.msku] === it.quantity ? "good" : "bad"}">${esc(it.msku)}: ${tot[it.msku]} / ${it.quantity}</span>`).join(" ")}</span></div></div>`;
+            <input type="number" min="1" data-s="${si}" data-l="${li}" data-k="count" value="${l.count}">
+            ${["length", "width", "height", "weight"].map((k) => `<input type="number" step="0.1" min="0" data-s="${si}" data-l="${li}" data-k="${k}" value="${l[k]}">`).join("")}
+            <div>${l.items.map((it, ii) => `<div class="row" style="gap:6px;margin-bottom:4px"><input class="w-num" style="width:70px" type="number" min="0" data-s="${si}" data-l="${li}" data-i="${ii}" value="${it.qty || 0}"><span class="small mono ${it.qty ? "" : "faint"}">${esc(it.msku)}</span></div>`).join("")}</div>
+            <button class="sm danger" data-rl="${si}:${li}" title="Remove line">×</button></div>`).join("")}
+          <div class="row" style="margin-top:8px"><button class="sm" data-al="${si}">+ Add box type</button>
+            <span class="small">${(s.items || []).map((it) => `<span class="badge ${tot[it.msku] === it.quantity ? "good" : "bad"}">${esc(it.msku)}: ${tot[it.msku]} / ${it.quantity}</span>`).join(" ")}</span></div></div>`;
         }).join("")}
-        <div class="row"><button id="bsave">Save draft</button><button class="primary" id="bsub">Send box contents to Amazon →</button></div></div>`;
-      $$("[data-k]", box).forEach((i) => i.onchange = () => { lines[groups[i.dataset.g].packingGroupId][i.dataset.l][i.dataset.k] = i.value; drawG(); });
-      $$("[data-i]", box).forEach((i) => i.onchange = () => { lines[groups[i.dataset.g].packingGroupId][i.dataset.l].items[i.dataset.i].qty = Number(i.value); drawG(); });
-      $$("[data-rl]", box).forEach((b) => b.onclick = () => { const [g, l] = b.dataset.rl.split(":").map(Number); lines[groups[g].packingGroupId].splice(l, 1); drawG(); });
-      $$("[data-al]", box).forEach((b) => b.onclick = () => { const g = groups[b.dataset.al]; lines[g.packingGroupId].push({ count: 1, length: "", width: "", height: "", weight: "", items: g.items.map((it) => ({ msku: it.msku, qty: 0 })) }); drawG(); });
+        <div class="row"><button id="bsave">Save draft</button><button class="primary" id="bsub">Submit boxes to Amazon →</button></div></div>`;
+      $$("[data-k]", box).forEach((i) => i.onchange = () => { lines[shipments[i.dataset.s].shipmentId][i.dataset.l][i.dataset.k] = i.value; drawG(); });
+      $$("[data-i]", box).forEach((i) => i.onchange = () => { lines[shipments[i.dataset.s].shipmentId][i.dataset.l].items[i.dataset.i].qty = Number(i.value); drawG(); });
+      $$("[data-rl]", box).forEach((b) => b.onclick = () => { const [si, li] = b.dataset.rl.split(":").map(Number); lines[shipments[si].shipmentId].splice(li, 1); drawG(); });
+      $$("[data-al]", box).forEach((b) => b.onclick = () => { const s = shipments[b.dataset.al]; lines[s.shipmentId].push({ count: 1, length: "", width: "", height: "", weight: "", items: (s.items || []).map((it) => ({ msku: it.msku, qty: 0 })) }); drawG(); });
       $("#bsave").onclick = async () => { await api("PUT", `/ship/plans/${id}`, { boxes: lines }); toast("Saved"); };
-      $("#bsub").onclick = () => run("boxes_submit", { groups: lines });
+      $("#bsub").onclick = () => run("boxes_submit", { boxes: lines });
     };
     drawG();
+  };
+
+  const labelButtons = (s, freight) => `<span class="small muted">Labels:</span>
+    <button class="sm" data-lb="${esc(s.shipmentId)}" data-kind="box2">Box labels (2/page)</button>
+    <button class="sm" data-lb="${esc(s.shipmentId)}" data-kind="box6">Box labels (6/page)</button>
+    ${freight ? `<button class="sm" data-lb="${esc(s.shipmentId)}" data-kind="pallet">Pallet labels</button>` : ""}`;
+  const bindLabels = () => $$("[data-lb]").forEach((b) => b.onclick = () => window.open(labelUrl(b.dataset.lb, b.dataset.kind), "_blank"));
+
+  // ---- 4. freight ----
+  const drawFreight = (box, d) => {
+    const sh = d.shipments || [];
+    const c = d.contact || defaults.contact || {};
+    const mode = d.freightMode || "freight";
+    const have = sh.some((s) => (s.transportOptions || []).length);
+    box.innerHTML = `<div class="card"><div class="card-h"><h2>Freight</h2><div class="row">${sh.map((s) => labelButtons(s, false)).join("")}</div></div>
+      <div class="filters">
+        <label class="f">Ship by<select id="fm"><option value="freight" ${mode === "freight" ? "selected" : ""}>Amazon Freight — pallets (LTL / FTL)</option><option value="parcel" ${mode === "parcel" ? "selected" : ""}>Small parcel — boxes</option></select></label>
+        <label class="f">Freight ready date<input type="date" id="rd" value="${d.readyDate || addDays(todayLA(), 1)}"></label>
+        <label class="f">Contact name<input id="cn" value="${esc(c.name || "")}"></label>
+        <label class="f">Contact phone<input id="cp" value="${esc(c.phoneNumber || "")}"></label>
+        <label class="f">Contact email<input id="ce" value="${esc(c.email || "")}"></label></div>
+      ${sh.map((s, si) => { const f = s.freight || {}; return `<div class="card" style="padding:12px;margin-top:12px"><b>→ ${esc(s.warehouse || s.shipmentId)}</b> <span class="small muted">${esc(s.city || "")} ${esc(s.state || "")} · ${fmtN(s.boxCount || 0)} boxes</span>
+        <div class="filters pal ${mode === "freight" ? "" : "hidden"}" style="margin-top:8px">
+          <label class="f"># pallets<input class="w-num" type="number" min="1" data-f="${si}" data-k="pallets" value="${f.pallets || ""}"></label>
+          <label class="f">Length in<input class="w-num" type="number" data-f="${si}" data-k="length" value="${f.length || 48}"></label>
+          <label class="f">Width in<input class="w-num" type="number" data-f="${si}" data-k="width" value="${f.width || 40}"></label>
+          <label class="f">Height in<input class="w-num" type="number" data-f="${si}" data-k="height" value="${f.height || ""}"></label>
+          <label class="f">Weight per pallet lb<input class="w-num" type="number" data-f="${si}" data-k="weight" value="${f.weight || ""}"></label>
+          <label class="f">Declared value $<input class="w-num" type="number" data-f="${si}" data-k="declaredValue" value="${f.declaredValue || ""}"></label>
+          <label class="chk" style="padding-bottom:8px"><input type="checkbox" data-f="${si}" data-k="stackable" ${f.stackable === false ? "" : "checked"}> Stackable</label></div>
+        ${(s.transportOptions || []).map((o, i) => `<label class="chk" style="display:flex;margin:6px 0"><input type="radio" name="t-${esc(s.shipmentId)}" value="${esc(o.transportationOptionId)}" ${i === 0 ? "checked" : ""}>
+          <b>${o.solution === "AMAZON_PARTNERED_CARRIER" ? "Amazon Freight / partnered" : "Your own carrier"}</b> · ${esc(o.carrier || "")} · ${esc((o.mode || "").replace("FREIGHT_", "").replace("GROUND_SMALL_PARCEL", "small parcel"))} · <b>${o.cost !== null ? fmt$(o.cost) : "no quote"}</b></label>`).join("")}</div>`; }).join("")}
+      <div class="row" style="margin-top:12px">${canSpend() ? `<button ${have ? "" : 'class="primary"'} id="fq">${have ? "Re-quote" : "Get quote →"}</button>${have ? `<button class="primary" id="fc">Confirm freight →</button>` : ""}` : `<span class="small muted">A manager or admin books the freight.</span>`}</div></div>`;
+    bindLabels();
+    $("#fm").onchange = () => $$(".pal").forEach((x) => x.classList.toggle("hidden", $("#fm").value !== "freight"));
+    if (!canSpend()) return;
+    const collect = () => {
+      const freight = {};
+      sh.forEach((s, si) => {
+        const f = {};
+        $$(`[data-f="${si}"]`).forEach((i) => { f[i.dataset.k] = i.type === "checkbox" ? i.checked : i.value; });
+        freight[s.shipmentId] = f;
+      });
+      return { mode: $("#fm").value, readyDate: $("#rd").value, contact: { name: $("#cn").value.trim(), phoneNumber: $("#cp").value.trim(), email: $("#ce").value.trim() }, freight };
+    };
+    $("#fq").onclick = () => run("freight_quote", collect());
+    if ($("#fc")) $("#fc").onclick = () => {
+      const selections = {}; let total = 0;
+      for (const s of sh) {
+        const v = $(`input[name="t-${CSS.escape(s.shipmentId)}"]:checked`)?.value;
+        selections[s.shipmentId] = v;
+        total += (s.transportOptions || []).find((o) => o.transportationOptionId === v)?.cost || 0;
+      }
+      run("freight_confirm", { selections }, "Book freight?", `<p>Freight charges of <b>${fmt$(total)}</b> are billed to your seller account. After this the shipment is final.</p>`, `Book — ${fmt$(total)}`);
+    };
+  };
+
+  // ---- 5. done ----
+  const drawDone = (box, d) => {
+    const sh = d.shipments || [];
+    box.innerHTML = `<div class="card"><div class="card-h"><h2>${p.status === "cancelled" ? "Cancelled" : "Ready to ship"}</h2>${p.inbound_plan_id && canShip() ? `<button id="rf">Refresh from Amazon</button>` : ""}</div>
+      ${sh.map((s) => `<div class="card" style="padding:12px"><div class="row between"><div><b>${esc(s.confirmationId || s.shipmentId)}</b> → <b>${esc(s.warehouse || "")}</b> <span class="small muted">${esc(s.city || "")} ${esc(s.state || "")} · ${fmtN(s.boxCount || 0)} boxes ${s.freight?.pallets ? `· ${s.freight.pallets} pallets` : ""} ${s.status ? "· " + esc(s.status) : ""}</span></div>
+        ${p.status === "confirmed" ? `<div class="row">${labelButtons(s, d.freightMode === "freight")}</div>` : ""}</div></div>`).join("") || `<p class="muted">No shipments.</p>`}
+      ${d.placementFee !== undefined ? `<p class="small muted">Placement fee ${fmt$(d.placementFee)}</p>` : ""}</div>`;
+    bindLabels();
+    if ($("#rf")) $("#rf").onclick = () => run("refresh");
   };
   await render();
 }
@@ -1614,11 +1705,11 @@ PAGES.users = async (el) => {
   if (state.me.role !== "admin") { el.innerHTML = header("Users") + `<div class="banner warn"><div class="txt">Admins only.</div></div>`; return; }
   const u = await GET("/users");
   el.innerHTML = header("Users", "Who can sign in, and what they can do", `<button class="primary" id="add">Add user</button>`) + `
-    <div class="card small muted"><b>Admin</b>: everything, including users and connections. <b>Manager</b>: everything except users/connections (can change prices, rules, images). <b>Viewer</b>: read-only dashboards.</div>
+    <div class="card small muted"><b>Admin</b>: everything, including users and connections. <b>Manager</b>: everything except users/connections (can change prices, rules, images). <b>Warehouse</b>: Inventory and Shipping only — build shipments, enter boxes, print labels (can't confirm anything that costs money). <b>Viewer</b>: read-only dashboards.</div>
     <div class="card flush" id="t"></div>`;
   table($("#t"), [
     { k: "name", l: "Name", f: (r) => `<b>${esc(r.name || "")}</b><div class="small muted">${esc(r.email)}</div>` },
-    { k: "role", l: "Role", f: (r) => `<select data-role="${r.id}">${["admin", "manager", "viewer"].map((x) => `<option ${x === r.role ? "selected" : ""}>${x}</option>`).join("")}</select>` },
+    { k: "role", l: "Role", f: (r) => `<select data-role="${r.id}">${["admin", "manager", "warehouse", "viewer"].map((x) => `<option ${x === r.role ? "selected" : ""}>${x}</option>`).join("")}</select>` },
     { k: "active", l: "Active", f: (r) => `<input type="checkbox" data-act="${r.id}" ${r.active ? "checked" : ""}>` },
     { k: "last_login", l: "Last sign-in", f: (r) => ago(r.last_login) },
     { k: "x", l: "", noSort: 1, f: (r) => `<button class="sm" data-pw="${r.id}">Reset password</button> ${r.id !== state.me.id ? `<button class="sm danger" data-del="${r.id}">Delete</button>` : ""}` },
@@ -1631,7 +1722,7 @@ PAGES.users = async (el) => {
   $("#add").onclick = () => {
     const m = modal(`<h2>Add user</h2><div class="form-grid">
       <label class="f">Name<input id="u-n"></label><label class="f">Email<input id="u-e" type="email"></label>
-      <label class="f">Role<select id="u-r"><option>viewer</option><option selected>manager</option><option>admin</option></select></label>
+      <label class="f">Role<select id="u-r"><option>viewer</option><option>warehouse</option><option selected>manager</option><option>admin</option></select></label>
       <label class="f">Temporary password<input id="u-p" value="${Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 8)}"></label></div>
       <p class="small muted">Share the email and temporary password with them. They can change it after signing in.</p>
       <div class="foot"><button data-close>Cancel</button><button class="primary" id="u-ok">Create</button></div>`);
