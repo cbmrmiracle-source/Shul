@@ -1,6 +1,7 @@
 // Indian Craft Supply CRM — Cloudflare Worker + Durable Object (SQLite)
 import { DurableObject } from "cloudflare:workers";
 import PostalMime from "postal-mime";
+import { installMail } from "./mail.js";
 
 import indexHtml from "../public/index.html";
 import appCss from "../public/app.css";
@@ -23,11 +24,13 @@ const SEC_HEADERS = {
 export default {
   async fetch(req, env) {
     const p = new URL(req.url).pathname;
-    if (p.startsWith("/api/") || p.startsWith("/t/") || p.startsWith("/u/")) return stub(env).fetch(req);
+    if (p.startsWith("/api/") || p.startsWith("/t/") || p.startsWith("/u/") || p.startsWith("/f/")) return stub(env).fetch(req);
     const f = STATIC[p];
     if (!f) return new Response("Not found", { status: 404 });
     return new Response(f[0], { headers: { "content-type": f[1], "cache-control": p === "/" || p.endsWith(".html") ? "no-cache" : "public, max-age=300", ...SEC_HEADERS } });
   },
+  // Every 10 minutes: pull new mail from connected Gmail accounts
+  async scheduled(event, env, ctx) { ctx.waitUntil(stub(env).syncAll()); },
   // Inbound email via Cloudflare Email Routing (route an address like sales@yourdomain to this Worker)
   async email(message, env) {
     try {
@@ -117,7 +120,7 @@ async function hashPassword(pw, salt) {
 }
 function safeEq(a, b) { if (a.length !== b.length) return false; let r = 0; for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i); return r === 0; }
 const escHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const stripHtml = (h) => String(h || "").replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|h\d|li|tr)>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/\n{3,}/g, "\n\n").trim();
+const stripHtml = (h) => String(h || "").replace(/<style[\s\S]*?<\/style>/gi, "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|h\d|li|tr)>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").split("\n").map((l) => l.replace(/[ \t]+/g, " ").trim()).join("\n").replace(/\n{3,}/g, "\n\n").trim();
 const normTags = (v) => v == null ? null : String(v).split(",").map((t) => t.trim()).filter(Boolean).join(",");
 const validEmail = (e) => /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(String(e || ""));
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store", ...headers } });
@@ -156,9 +159,10 @@ const ENT = {
   },
   interactions: {
     table: "interactions", a: "i",
-    select: `SELECT i.*, (c.first_name || ' ' || COALESCE(c.last_name,'')) AS contact_name, co.name AS company_name, d.title AS deal_title, u.name AS user_name
+    select: `SELECT i.*, (c.first_name || ' ' || COALESCE(c.last_name,'')) AS contact_name, co.name AS company_name, d.title AS deal_title, u.name AS user_name,
+      em.opened_at AS em_opened, em.open_count AS em_opens, em.clicked_at AS em_clicked, em.click_count AS em_clicks, em.replied_at AS em_replied, em.bounced_at AS em_bounced, em.token IS NOT NULL AS em_tracked
       FROM interactions i LEFT JOIN contacts c ON c.id=i.contact_id LEFT JOIN companies co ON co.id=i.company_id
-      LEFT JOIN deals d ON d.id=i.deal_id LEFT JOIN users u ON u.id=i.user_id`,
+      LEFT JOIN deals d ON d.id=i.deal_id LEFT JOIN users u ON u.id=i.user_id LEFT JOIN emails em ON em.id=i.email_id`,
     fields: ["contact_id", "company_id", "deal_id", "ticket_id", "type", "direction", "subject", "body", "outcome", "occurred_at", "duration_min", "follow_up", "user_id"],
     required: ["type"], search: ["i.subject", "i.body", "c.first_name", "c.last_name", "co.name"],
     sortExtra: ["contact_name", "company_name", "user_name"], defaultSort: "occurred_at", label: (r) => r.subject || r.type,
@@ -194,34 +198,38 @@ const ENT = {
   },
   templates: {
     table: "templates", a: "tp", select: `SELECT tp.* FROM templates tp`,
-    fields: ["name", "category", "subject", "body_html"], required: ["name"], search: ["tp.name", "tp.subject", "tp.category"],
+    fields: ["name", "category", "subject", "body_html", "layout"], required: ["name"], search: ["tp.name", "tp.subject", "tp.category"],
     defaultSort: "name", defaultDir: "ASC", label: (r) => r.name,
   },
   campaigns: {
     table: "campaigns", a: "cm",
     select: `SELECT cm.*, u.name AS creator_name,
       (SELECT COUNT(*) FROM campaign_recipients r WHERE r.campaign_id=cm.id) AS recipients,
-      (SELECT COUNT(*) FROM campaign_recipients r WHERE r.campaign_id=cm.id AND r.status IN ('Sent','Opened','Clicked')) AS sent,
+      (SELECT COUNT(*) FROM campaign_recipients r WHERE r.campaign_id=cm.id AND r.sent_at IS NOT NULL) AS sent,
+      (SELECT COUNT(*) FROM campaign_recipients r WHERE r.campaign_id=cm.id AND r.replied_at IS NOT NULL) AS replied,
+      (SELECT COUNT(*) FROM campaign_recipients r WHERE r.campaign_id=cm.id AND r.bounced_at IS NOT NULL) AS bounced,
       (SELECT COUNT(*) FROM campaign_recipients r WHERE r.campaign_id=cm.id AND r.opened_at IS NOT NULL) AS opened,
       (SELECT COUNT(*) FROM campaign_recipients r WHERE r.campaign_id=cm.id AND r.clicked_at IS NOT NULL) AS clicked,
       (SELECT COUNT(*) FROM campaign_recipients r WHERE r.campaign_id=cm.id AND r.status='Failed') AS failed
       FROM campaigns cm LEFT JOIN users u ON u.id=cm.created_by`,
-    fields: ["name", "subject", "preheader", "body_html", "segment"], required: ["name"], search: ["cm.name", "cm.subject"], label: (r) => r.name,
+    fields: ["name", "subject", "preheader", "body_html", "segment", "mailbox_id", "layout"], required: ["name"], search: ["cm.name", "cm.subject"], label: (r) => r.name,
   },
   emails: {
     table: "emails", a: "e", readOnly: true,
-    select: `SELECT e.id, e.contact_id, e.deal_id, e.ticket_id, e.direction, e.from_addr, e.to_addr, e.subject, e.status, e.error, e.opened_at, e.open_count, e.created_at, e.user_id,
-      (c.first_name || ' ' || COALESCE(c.last_name,'')) AS contact_name, u.name AS user_name FROM emails e LEFT JOIN contacts c ON c.id=e.contact_id LEFT JOIN users u ON u.id=e.user_id`,
-    fields: ["contact_id", "deal_id", "ticket_id", "direction", "status"], search: ["e.subject", "e.to_addr", "e.from_addr", "c.first_name", "c.last_name"], label: (r) => r.subject,
+    select: `SELECT e.id, e.contact_id, e.deal_id, e.ticket_id, e.direction, e.from_addr, e.to_addr, e.cc_addr, e.subject, e.snippet, e.status, e.error, e.opened_at, e.open_count, e.clicked_at, e.click_count,
+      e.replied_at, e.bounced_at, e.is_read, e.mailbox_id, e.thread_id, e.attachments, e.token IS NOT NULL AS tracked, e.created_at, e.user_id,
+      (c.first_name || ' ' || COALESCE(c.last_name,'')) AS contact_name, u.name AS user_name, mb.email AS mailbox_email
+      FROM emails e LEFT JOIN contacts c ON c.id=e.contact_id LEFT JOIN users u ON u.id=e.user_id LEFT JOIN mailboxes mb ON mb.id=e.mailbox_id`,
+    fields: ["contact_id", "deal_id", "ticket_id", "direction", "status", "mailbox_id", "thread_id", "is_read"], scope: (me, db) => db.emailScope(me), search: ["e.subject", "e.to_addr", "e.from_addr", "e.snippet", "c.first_name", "c.last_name"], label: (r) => r.subject,
   },
 };
 
 const DEFAULT_SETTINGS = {
   company_name: "Indian Craft Supply", company_tagline: "Wholesale jute, burlap & cotton", company_address: "", company_phone: "", company_website: "",
   currency: "USD", monthly_target: "0", email_from_name: "Indian Craft Supply", email_from_address: "", email_reply_to: "",
-  email_signature: "", support_address: "", inbound_address: "",
+  email_signature: "", support_address: "", inbound_address: "", google_client_id: "", brand_color: "#86602d", logo_url: "", email_footer: "",
 };
-const SECRET_SETTINGS = ["resend_api_key"];
+const SECRET_SETTINGS = ["resend_api_key", "google_client_secret"];
 
 // ---------------------------------------------------------------- Durable Object
 export class CrmDB extends DurableObject {
@@ -265,6 +273,7 @@ export class CrmDB extends DurableObject {
       for (const x of tpl) this.sql.exec(`INSERT INTO templates (name,category,subject,body_html,created_at,updated_at) VALUES (?,?,?,?,?,?)`, ...x, t, t);
       this.sql.exec("INSERT OR REPLACE INTO settings (key,value) VALUES ('_seeded','1')");
     }
+    this.mailMigrate();
   }
 
   audit(user, action, entity, id, details) {
@@ -275,7 +284,7 @@ export class CrmDB extends DurableObject {
   async fetch(req) {
     const url = new URL(req.url);
     try {
-      if (url.pathname.startsWith("/t/") || url.pathname.startsWith("/u/")) return await this.publicRoutes(req, url);
+      if (/^\/(t|u|f)\//.test(url.pathname)) return await this.publicRoutes(req, url);
       if (req.method !== "GET" && req.method !== "HEAD") {
         const origin = req.headers.get("origin");
         if (origin && origin !== url.origin) fail(403, "Bad origin");
@@ -352,6 +361,7 @@ export class CrmDB extends DurableObject {
       this.audit(u, "login", "users", u.id);
       return json({ user: this.publicUser(u) }, 200, { "set-cookie": await this.newSession(u, req) });
     }
+    if (P === "/api/gmail/callback" && M === "GET") return this.gmailCallback(url);
     if (P === "/api/auth/logout" && M === "POST") {
       const u = await this.currentUser(req);
       if (u) this.sql.exec("DELETE FROM sessions WHERE token_hash=?", u.sessionHash);
@@ -432,7 +442,10 @@ export class CrmDB extends DurableObject {
     if (P === "/api/settings" && M === "GET") {
       const out = { ...DEFAULT_SETTINGS };
       for (const r of this.all("SELECT key,value FROM settings")) if (!r.key.startsWith("_") && !SECRET_SETTINGS.includes(r.key)) out[r.key] = r.value;
-      out.email_ready = !!this.resendKey() && validEmail(out.email_from_address);
+      out.email_ready = this.resendReady();
+      out.google_ready = this.googleReady();
+      out.google_secret_saved = !!this.one("SELECT value FROM settings WHERE key='google_client_secret'")?.value;
+      out.redirect_uri = url.origin + "/api/gmail/callback";
       out.resend_key_source = this.env.RESEND_API_KEY ? "worker secret" : this.one("SELECT value FROM settings WHERE key='resend_api_key'")?.value ? "saved in settings" : "";
       out.stages = STAGES; out.stage_probability = STAGE_PROB;
       return json(out);
@@ -446,9 +459,14 @@ export class CrmDB extends DurableObject {
         this.sql.exec("INSERT OR REPLACE INTO settings (key,value) VALUES (?,?)", k, String(v ?? ""));
       }
       if (b.clear_resend_key) this.sql.exec("DELETE FROM settings WHERE key='resend_api_key'");
+      if (b.brand_color && !/^#[0-9a-f]{3,8}$/i.test(b.brand_color)) fail(400, "Brand color must be a hex color like #86602d");
       this.audit(me, "update", "settings", null, Object.keys(b).join(", "));
       return json({ ok: true });
     }
+
+    // ---- email, Gmail, tracking, images (mail.js)
+    const mr = await this.mailApi(M, P, Q, req, url, me, need);
+    if (mr) return mr;
 
     // ---- custom endpoints
     if (P === "/api/dashboard" && M === "GET") return json(this.dashboard(me));
@@ -457,17 +475,10 @@ export class CrmDB extends DurableObject {
     if (P === "/api/search" && M === "GET") return json(this.search(Q.q || ""));
     if (P === "/api/graph" && M === "GET") return json(this.graph(Q));
     if (P === "/api/timeline" && M === "GET") return json(this.timeline(Q));
-    if (P === "/api/lookups" && M === "GET") return json(this.lookups());
+    if (P === "/api/lookups" && M === "GET") return json(this.lookups(me));
     if (P === "/api/contacts/import" && M === "POST") { need(1); return json(this.importContacts(await this.body(req), me)); }
     if (P === "/api/contacts/bulk" && M === "POST") { need(1); return json(this.bulkContacts(await this.body(req), me)); }
-    if (P === "/api/emails/send" && M === "POST") { need(1); return json(await this.sendOne(await this.body(req), me, url.origin)); }
-    if ((m = P.match(/^\/api\/emails\/(\d+)$/)) && M === "GET") {
-      const e = this.one("SELECT e.*, (c.first_name || ' ' || COALESCE(c.last_name,'')) AS contact_name FROM emails e LEFT JOIN contacts c ON c.id=e.contact_id WHERE e.id=?", +m[1]) || fail(404, "Not found");
-      return json(e);
-    }
     if (P === "/api/campaigns/segment-preview" && M === "POST") { const b = await this.body(req); const rows = this.segmentContacts(b.segment || {}); return json({ count: rows.length, sample: rows.slice(0, 25) }); }
-    if ((m = P.match(/^\/api\/campaigns\/(\d+)\/test$/)) && M === "POST") { need(1); return json(await this.campaignTest(+m[1], await this.body(req), me, url.origin)); }
-    if ((m = P.match(/^\/api\/campaigns\/(\d+)\/send$/)) && M === "POST") { need(2); return json(await this.campaignSend(+m[1], me, url.origin)); }
     if ((m = P.match(/^\/api\/campaigns\/(\d+)\/recipients$/)) && M === "GET") {
       return json({ rows: this.all(`SELECT r.*, (c.first_name || ' ' || COALESCE(c.last_name,'')) AS contact_name, co.name AS company_name FROM campaign_recipients r LEFT JOIN contacts c ON c.id=r.contact_id LEFT JOIN companies co ON co.id=c.company_id WHERE r.campaign_id=? ORDER BY r.id`, +m[1]) });
     }
@@ -475,7 +486,7 @@ export class CrmDB extends DurableObject {
       need(1);
       const c = this.one("SELECT * FROM campaigns WHERE id=?", +m[1]) || fail(404, "Not found");
       const t = nowIso();
-      return json(this.one("INSERT INTO campaigns (name,subject,preheader,body_html,segment,status,created_by,created_at,updated_at) VALUES (?,?,?,?,?,'Draft',?,?,?) RETURNING *", c.name + " (copy)", c.subject, c.preheader, c.body_html, c.segment, me.id, t, t));
+      return json(this.one("INSERT INTO campaigns (name,subject,preheader,body_html,segment,mailbox_id,layout,status,created_by,created_at,updated_at) VALUES (?,?,?,?,?,?,?,'Draft',?,?,?) RETURNING *", c.name + " (copy)", c.subject, c.preheader, c.body_html, c.segment, c.mailbox_id, c.layout, me.id, t, t));
     }
     if ((m = P.match(/^\/api\/tickets\/(\d+)\/comments$/))) {
       const tid = +m[1];
@@ -533,6 +544,7 @@ export class CrmDB extends DurableObject {
     if (Q.from) { where.push(`${a}.${e.defaultSort === "occurred_at" ? "occurred_at" : "created_at"} >= ?`); b.push(Q.from); }
     if (Q.to) { where.push(`${a}.${e.defaultSort === "occurred_at" ? "occurred_at" : "created_at"} <= ?`); b.push(Q.to + "T23:59:59"); }
     if (name === "relationships" && Q.entity_type && Q.entity_id) { where.push("((r.from_type=? AND r.from_id=?) OR (r.to_type=? AND r.to_id=?))"); b.push(Q.entity_type, +Q.entity_id, Q.entity_type, +Q.entity_id); }
+    if (e.scope) { const [w, ...bb] = e.scope(me, this); where.push(w); b.push(...bb); }
     const W = where.length ? " WHERE " + where.join(" AND ") : "";
     let sort = Q.sort && /^[a-z_]+$/.test(Q.sort) && (e.fields.includes(Q.sort) || (e.sortExtra || []).includes(Q.sort) || ["id", "created_at", "updated_at", "last_contacted", "closed_at"].includes(Q.sort)) ? Q.sort : e.defaultSort || "id";
     const dir = (Q.dir || e.defaultDir || "DESC").toUpperCase() === "ASC" ? "ASC" : "DESC";
@@ -623,6 +635,7 @@ export class CrmDB extends DurableObject {
     else if (keys.length) this.sql.exec(`UPDATE ${e.table} SET ${keys.map((k) => `${k}=?`).join(",")} WHERE id=?`, ...keys.map((k) => v[k]), id);
     const newId = id || row.id;
     // --- after-save effects
+    if (name === "contacts" && v.email) this.sql.exec("UPDATE emails SET contact_id=? WHERE contact_id IS NULL AND ((direction='in' AND from_addr LIKE ?) OR (direction='out' AND to_addr LIKE ?))", newId, `%${v.email}%`, `%${v.email}%`);
     if (name === "interactions" && v.contact_id) this.sql.exec("UPDATE contacts SET last_contacted=MAX(COALESCE(last_contacted,''), ?) WHERE id=?", v.occurred_at || t, v.contact_id);
     if (name === "deals" && (!id || (v.stage && v.stage !== before.stage))) {
       this.sql.exec("INSERT INTO deal_stage_history (deal_id,from_stage,to_stage,user_id,at) VALUES (?,?,?,?,?)", newId, before?.stage ?? null, v.stage, me.id, t);
@@ -659,14 +672,15 @@ export class CrmDB extends DurableObject {
     });
   }
 
-  lookups() {
+  lookups(me) {
     return {
+      mailboxes: me ? this.mailboxesFor(me).map((x) => ({ id: x.id, email: x.email, name: x.name, mine: x.mine, owner_name: x.owner_name, status: x.status, unread: x.unread })) : [],
       users: this.all("SELECT id,name,role FROM users WHERE active=1 ORDER BY name"),
       companies: this.all("SELECT id,name FROM companies ORDER BY name LIMIT 5000"),
       contacts: this.all("SELECT c.id, c.first_name || ' ' || COALESCE(c.last_name,'') AS name, c.email, c.company_id, co.name AS company_name FROM contacts c LEFT JOIN companies co ON co.id=c.company_id ORDER BY c.first_name LIMIT 10000"),
       deals: this.all("SELECT id,title AS name,contact_id,company_id,stage FROM deals ORDER BY id DESC LIMIT 2000"),
       products: this.all("SELECT id,name,sku,unit,price,category FROM products WHERE active=1 ORDER BY category,name"),
-      templates: this.all("SELECT id,name,subject,body_html,category FROM templates ORDER BY name"),
+      templates: this.all("SELECT id,name,subject,body_html,category,layout FROM templates ORDER BY name"),
       tags: [...new Set(this.all("SELECT tags FROM contacts WHERE tags IS NOT NULL UNION ALL SELECT tags FROM companies WHERE tags IS NOT NULL").flatMap((r) => r.tags.split(",")))].sort(),
       sources: this.all("SELECT DISTINCT lead_source AS v FROM contacts WHERE lead_source IS NOT NULL ORDER BY 1").map((r) => r.v),
       countries: this.all("SELECT DISTINCT country AS v FROM contacts WHERE country IS NOT NULL ORDER BY 1").map((r) => r.v),
@@ -709,6 +723,7 @@ export class CrmDB extends DurableObject {
         WHERE c.type IN ('Lead','Prospect') AND c.status='Active' AND (c.last_contacted IS NULL OR c.last_contacted < ?) ORDER BY CASE c.rating WHEN 'Hot' THEN 0 WHEN 'Warm' THEN 1 ELSE 2 END, c.last_contacted LIMIT 8`, new Date(Date.now() - 14 * 864e5).toISOString()),
       closing_soon: this.all(`${ENT.deals.select} WHERE d.stage NOT IN ('Won','Lost') AND d.expected_close IS NOT NULL ORDER BY d.expected_close ASC LIMIT 6`),
       sources: this.all("SELECT COALESCE(lead_source,'Unknown') AS label, COUNT(*) AS value FROM contacts GROUP BY 1 ORDER BY 2 DESC LIMIT 8"),
+      engagement: this.recentEngagement(8),
     };
   }
 
@@ -918,74 +933,7 @@ export class CrmDB extends DurableObject {
     return { ok: true, count: ids.length };
   }
 
-  // ---------------------------------------------------------- email
-  resendKey() { return this.env.RESEND_API_KEY || this.one("SELECT value FROM settings WHERE key='resend_api_key'")?.value || ""; }
-  fromHeader() {
-    const addr = this.setting("email_from_address");
-    if (!validEmail(addr)) fail(400, "Set a 'From' email address in Settings → Email first");
-    if (!this.resendKey()) fail(400, "Email sending is not configured yet. Add your Resend API key in Settings → Email.");
-    const name = (this.setting("email_from_name") || this.setting("company_name") || "").replace(/["<>]/g, "");
-    return name ? `${name} <${addr}>` : addr;
-  }
-  merge(text, contact, me, extra = {}) {
-    const co = contact?.company_id ? this.one("SELECT name FROM companies WHERE id=?", contact.company_id)?.name : contact?.company_name;
-    const sig = this.setting("email_signature") || `${me?.name || ""}<br>${this.setting("company_name")}`;
-    const vars = {
-      first_name: contact?.first_name || "there", last_name: contact?.last_name || "", full_name: contact ? `${contact.first_name} ${contact.last_name || ""}`.trim() : "",
-      company: co || "your company", email: contact?.email || "", city: contact?.city || "", title: contact?.title || "",
-      my_name: me?.name || "", my_email: me?.email || "", my_phone: me?.phone || "", my_title: me?.title || "",
-      my_company: this.setting("company_name"), signature: sig.replace(/\{\{my_name\}\}/g, me?.name || "").replace(/\{\{my_title\}\}/g, me?.title || "").replace(/\{\{my_phone\}\}/g, me?.phone || ""), ...extra,
-    };
-    return String(text || "").replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (m0, k) => (k in vars ? (k === "signature" ? vars[k] : escHtml(vars[k])) : m0));
-  }
-  wrap(inner, { preheader = "", footer = "", pixel = "" } = {}) {
-    const company = escHtml(this.setting("company_name")), addr = escHtml(this.setting("company_address") || "");
-    return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head><body style="margin:0;background:#f6f3ee;font-family:Helvetica,Arial,sans-serif;color:#2b2620">
-<span style="display:none;max-height:0;overflow:hidden;opacity:0">${escHtml(preheader)}</span>
-<table width="100%" cellpadding="0" cellspacing="0" style="background:#f6f3ee;padding:24px 12px"><tr><td align="center">
-<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #e8e1d6">
-<tr><td style="background:#7a5a2f;padding:18px 28px;color:#fff;font-size:18px;font-weight:bold;letter-spacing:.3px">${company}</td></tr>
-<tr><td style="padding:28px;font-size:15px;line-height:1.6">${inner}</td></tr>
-<tr><td style="padding:16px 28px;background:#faf7f2;color:#8a8073;font-size:12px;line-height:1.5">${company}${addr ? " · " + addr : ""}${footer}</td></tr>
-</table></td></tr></table>${pixel}</body></html>`;
-  }
-  async resend(payload, batch = false) {
-    const r = await fetch(batch ? "https://api.resend.com/emails/batch" : "https://api.resend.com/emails", {
-      method: "POST", headers: { Authorization: `Bearer ${this.resendKey()}`, "Content-Type": "application/json" }, body: JSON.stringify(payload),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(data.message || data.error || `Email provider error ${r.status}`);
-    return data;
-  }
-  async sendOne(b, me, origin) {
-    const from = this.fromHeader();
-    let contact = b.contact_id ? this.one("SELECT * FROM contacts WHERE id=?", +b.contact_id) : null;
-    const to = String(b.to || contact?.email || "").trim().toLowerCase();
-    if (!validEmail(to)) fail(400, "A valid recipient email is required");
-    if (!contact) contact = this.one("SELECT * FROM contacts WHERE email=?", to);
-    if (!b.subject) fail(400, "Subject is required");
-    const token = rid(16), t = nowIso();
-    const subject = this.merge(b.subject, contact, me).replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"');
-    const inner = this.merge(b.body_html || "", contact, me);
-    const html = this.wrap(inner, { pixel: `<img src="${origin}/t/e/${token}.gif" width="1" height="1" alt="" style="display:none">` });
-    const cc = String(b.cc || "").split(",").map((s) => s.trim()).filter(validEmail);
-    let status = "Sent", error = null, pid = null;
-    try {
-      const res = await this.resend({ from, to: [to], cc: cc.length ? cc : undefined, subject, html, text: stripHtml(inner), reply_to: this.setting("email_reply_to") || me.email });
-      pid = res.id || null;
-    } catch (e) { status = "Failed"; error = e.message; }
-    const em = this.one("INSERT INTO emails (contact_id,deal_id,ticket_id,direction,from_addr,to_addr,subject,body_html,body_text,status,error,provider_id,token,user_id,created_at) VALUES (?,?,?,'out',?,?,?,?,?,?,?,?,?,?,?) RETURNING id",
-      contact?.id ?? null, b.deal_id || null, b.ticket_id || null, from, to, subject, inner, stripHtml(inner), status, error, pid, token, me.id, t);
-    if (status === "Sent") {
-      this.sql.exec("INSERT INTO interactions (contact_id,company_id,deal_id,ticket_id,email_id,type,direction,subject,body,occurred_at,user_id,created_at) VALUES (?,?,?,?,?,'Email','Outbound',?,?,?,?,?)",
-        contact?.id ?? null, contact?.company_id ?? null, b.deal_id || null, b.ticket_id || null, em.id, subject, stripHtml(inner).slice(0, 5000), t, me.id, t);
-      if (contact) this.sql.exec("UPDATE contacts SET last_contacted=? WHERE id=?", t, contact.id);
-    }
-    this.audit(me, "email", "emails", em.id, `${to}: ${subject} (${status})`);
-    if (status === "Failed") fail(502, "Email was not sent: " + error);
-    return { ok: true, id: em.id };
-  }
-
+  // ---------------------------------------------------------- email (sending, Gmail, tracking: see mail.js)
   segmentContacts(seg) {
     const where = ["c.email IS NOT NULL", "c.email <> ''", "COALESCE(c.unsubscribed,0)=0", "COALESCE(c.status,'Active') <> 'Do not contact'"], b = [];
     const inList = (col, arr) => { if (Array.isArray(arr) && arr.length) { where.push(`${col} IN (${arr.map(() => "?").join(",")})`); b.push(...arr); } };
@@ -997,147 +945,6 @@ export class CrmDB extends DurableObject {
     if (Array.isArray(seg.contact_ids) && seg.contact_ids.length) inList("c.id", seg.contact_ids.map(Number));
     return this.all(`SELECT c.id, c.first_name, c.last_name, c.email, c.company_id, c.city, c.title, c.unsub_token, co.name AS company_name, c.type FROM contacts c LEFT JOIN companies co ON co.id=c.company_id WHERE ${where.join(" AND ")} GROUP BY c.email ORDER BY c.id`, ...b);
   }
-  campaignHtml(cm, contact, me, origin, token, unsubToken) {
-    let inner = this.merge(cm.body_html || "", contact, me);
-    if (token) inner = inner.replace(/href="(https?:\/\/[^"]+)"/gi, (m0, u) => `href="${origin}/t/c/${token}?u=${encodeURIComponent(u.replace(/&amp;/g, "&"))}"`);
-    const unsub = unsubToken ? `${origin}/u/${unsubToken}` : "#";
-    return {
-      html: this.wrap(inner, { preheader: cm.preheader, footer: `<br>You're receiving this because you're a contact of ${escHtml(this.setting("company_name"))}. <a href="${unsub}" style="color:#8a8073">Unsubscribe</a>`, pixel: token ? `<img src="${origin}/t/o/${token}.gif" width="1" height="1" alt="" style="display:none">` : "" }),
-      text: stripHtml(inner) + `\n\nUnsubscribe: ${unsub}`, unsub,
-    };
-  }
-  async campaignTest(id, b, me, origin) {
-    const cm = this.one("SELECT * FROM campaigns WHERE id=?", id) || fail(404, "Not found");
-    const to = String(b.to || me.email).trim();
-    if (!validEmail(to)) fail(400, "Invalid test address");
-    const from = this.fromHeader();
-    const sample = this.segmentContacts(JSON.parse(cm.segment || "{}"))[0] || { first_name: me.name.split(" ")[0], company_name: "Sample Company" };
-    const { html, text } = this.campaignHtml(cm, sample, me, origin, null, null);
-    await this.resend({ from, to: [to], subject: "[TEST] " + this.merge(cm.subject, sample, me).replace(/&amp;/g, "&").replace(/&#39;/g, "'"), html, text, reply_to: this.setting("email_reply_to") || me.email });
-    return { ok: true };
-  }
-  async campaignSend(id, me, origin) {
-    const cm = this.one("SELECT * FROM campaigns WHERE id=?", id) || fail(404, "Not found");
-    const from = this.fromHeader();
-    if (!cm.subject || !cm.body_html) fail(400, "Campaign needs a subject and content");
-    if (cm.status === "Draft") {
-      const list = this.segmentContacts(JSON.parse(cm.segment || "{}"));
-      if (!list.length) fail(400, "No contacts match this campaign's audience");
-      this.ctx.storage.transactionSync(() => {
-        for (const c of list) this.sql.exec("INSERT INTO campaign_recipients (campaign_id,contact_id,email,token,status) VALUES (?,?,?,?,'Queued')", id, c.id, c.email, rid(16));
-        this.sql.exec("UPDATE campaigns SET status='Sending', sent_at=?, updated_at=? WHERE id=?", nowIso(), nowIso(), id);
-      });
-      this.audit(me, "campaign_send", "campaigns", id, `${list.length} recipients`);
-    } else if (cm.status !== "Sending") fail(400, "This campaign was already sent");
-    const queue = this.all("SELECT r.*, c.first_name, c.last_name, c.company_id, c.city, c.title, c.unsub_token, c.unsubscribed FROM campaign_recipients r LEFT JOIN contacts c ON c.id=r.contact_id WHERE r.campaign_id=? AND r.status='Queued' ORDER BY r.id LIMIT 200", id);
-    let sent = 0, failed = 0;
-    for (let i = 0; i < queue.length; i += 100) {
-      const chunk = queue.slice(i, i + 100).filter((r) => { if (r.unsubscribed) { this.sql.exec("UPDATE campaign_recipients SET status='Skipped', error='Unsubscribed' WHERE id=?", r.id); return false; } return true; });
-      if (!chunk.length) continue;
-      const payload = chunk.map((r) => {
-        const { html, text, unsub } = this.campaignHtml(cm, r, me, origin, r.token, r.unsub_token);
-        return { from, to: [r.email], subject: this.merge(cm.subject, r, me).replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&quot;/g, '"'), html, text, reply_to: this.setting("email_reply_to") || undefined, headers: { "List-Unsubscribe": `<${unsub}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" } };
-      });
-      const t = nowIso();
-      try {
-        const res = await this.resend(payload, true);
-        const ids = res.data || [];
-        chunk.forEach((r, k) => {
-          this.sql.exec("UPDATE campaign_recipients SET status='Sent', sent_at=?, provider_id=? WHERE id=?", t, ids[k]?.id ?? null, r.id);
-          if (r.contact_id) {
-            this.sql.exec("INSERT INTO interactions (contact_id,company_id,type,direction,subject,body,occurred_at,user_id,created_at) VALUES (?,?,'Campaign','Outbound',?,?,?,?,?)", r.contact_id, r.company_id, `Campaign: ${cm.name}`, cm.subject, t, me.id, t);
-            this.sql.exec("UPDATE contacts SET last_contacted=? WHERE id=?", t, r.contact_id);
-          }
-        });
-        sent += chunk.length;
-      } catch (e) {
-        chunk.forEach((r) => this.sql.exec("UPDATE campaign_recipients SET status='Failed', error=? WHERE id=?", e.message.slice(0, 500), r.id));
-        failed += chunk.length;
-      }
-    }
-    const remaining = this.one("SELECT COUNT(*) AS n FROM campaign_recipients WHERE campaign_id=? AND status='Queued'", id).n;
-    if (!remaining) this.sql.exec("UPDATE campaigns SET status='Sent', updated_at=? WHERE id=?", nowIso(), id);
-    return { sent, failed, remaining };
-  }
-
-  async addTicketComment(tid, b, me, origin) {
-    const tk = this.one(`${ENT.tickets.select} WHERE tk.id=?`, tid) || fail(404, "Ticket not found");
-    if (!b.body) fail(400, "Comment is empty");
-    let emailed = 0;
-    if (b.email_customer && !b.internal) {
-      if (!tk.contact_email) fail(400, "This ticket's contact has no email address");
-      await this.sendOne({ contact_id: tk.contact_id, to: tk.contact_email, subject: `Re: [Ticket #${tid}] ${tk.subject}`, body_html: `<p>${escHtml(b.body).replace(/\n/g, "<br>")}</p><p>{{signature}}</p><p style="color:#8a8073;font-size:12px">Reply to this email to respond — please keep [Ticket #${tid}] in the subject.</p>`, ticket_id: tid }, me, origin);
-      emailed = 1;
-    }
-    const c = this.one("INSERT INTO ticket_comments (ticket_id,user_id,author,body,internal,emailed,created_at) VALUES (?,?,?,?,?,?,?) RETURNING *", tid, me.id, me.name, b.body, b.internal ? 1 : 0, emailed, nowIso());
-    if (b.status) this.save("tickets", tid, { status: b.status }, me);
-    else if (emailed && tk.status === "Open") this.sql.exec("UPDATE tickets SET status='Waiting on customer', updated_at=? WHERE id=?", nowIso(), tid);
-    return c;
-  }
-
-  // RPC from the Worker's email() handler
-  async inboundEmail(m) {
-    const addr = String(m.fromAddress || m.envelopeFrom).toLowerCase().trim(), t = nowIso();
-    let contact = this.one("SELECT * FROM contacts WHERE email=?", addr);
-    if (!contact) {
-      const [first, ...rest] = (m.fromName || addr.split("@")[0]).trim().split(/\s+/);
-      contact = this.one("INSERT INTO contacts (first_name,last_name,email,type,lead_source,rating,unsub_token,created_at,updated_at) VALUES (?,?,?,'Lead','Inbound email','Warm',?,?,?) RETURNING *", first || addr, rest.join(" ") || null, addr, rid(16), t, t);
-    }
-    const body = m.text || stripHtml(m.html);
-    const em = this.one("INSERT INTO emails (contact_id,direction,from_addr,to_addr,subject,body_html,body_text,status,created_at) VALUES (?,'in',?,?,?,?,?,'Received',?) RETURNING id", contact.id, addr, m.to, m.subject, m.html || null, body.slice(0, 100000), t);
-    let ticketId = null;
-    const tm = String(m.subject).match(/\[Ticket #(\d+)\]/i);
-    if (tm && this.one("SELECT id FROM tickets WHERE id=?", +tm[1])) {
-      ticketId = +tm[1];
-      this.sql.exec("INSERT INTO ticket_comments (ticket_id,author,body,internal,created_at) VALUES (?,?,?,0,?)", ticketId, `${contact.first_name} ${contact.last_name || ""} (customer)`.trim(), body.split(/\n>|\nOn .+wrote:/)[0].trim().slice(0, 20000), t);
-      this.sql.exec("UPDATE tickets SET status='Open', updated_at=? WHERE id=? AND status IN ('Waiting on customer','Resolved')", t, ticketId);
-    } else {
-      const support = (this.setting("support_address") || "").toLowerCase();
-      if (support && String(m.to).toLowerCase() === support) {
-        const tk = this.one("INSERT INTO tickets (subject,description,contact_id,company_id,category,priority,status,channel,due_at,created_at,updated_at) VALUES (?,?,?,?,'General','Normal','Open','Email',?,?,?) RETURNING id", m.subject, body.slice(0, 20000), contact.id, contact.company_id, new Date(Date.now() + 48 * 3600e3).toISOString(), t, t);
-        ticketId = tk.id;
-        this.sql.exec("INSERT INTO ticket_comments (ticket_id,author,body,internal,created_at) VALUES (?,?,?,0,?)", ticketId, `${contact.first_name} (customer)`, body.slice(0, 20000), t);
-      }
-    }
-    this.sql.exec("UPDATE emails SET ticket_id=? WHERE id=?", ticketId, em.id);
-    this.sql.exec("INSERT INTO interactions (contact_id,company_id,ticket_id,email_id,type,direction,subject,body,occurred_at,created_at) VALUES (?,?,?,?,'Email','Inbound',?,?,?,?)", contact.id, contact.company_id, ticketId, em.id, m.subject, body.slice(0, 5000), t, t);
-    this.sql.exec("UPDATE contacts SET last_contacted=? WHERE id=?", t, contact.id);
-    return { ok: true };
-  }
-
-  // ---------------------------------------------------------- public tracking routes
-  async publicRoutes(req, url) {
-    const gif = () => new Response(Uint8Array.from(atob("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"), (c) => c.charCodeAt(0)), { headers: { "content-type": "image/gif", "cache-control": "no-store" } });
-    let m;
-    if ((m = url.pathname.match(/^\/t\/o\/([a-f0-9]+)\.gif$/))) {
-      this.sql.exec("UPDATE campaign_recipients SET opened_at=COALESCE(opened_at,?), open_count=open_count+1, status=CASE WHEN status='Sent' THEN 'Opened' ELSE status END WHERE token=?", nowIso(), m[1]);
-      return gif();
-    }
-    if ((m = url.pathname.match(/^\/t\/e\/([a-f0-9]+)\.gif$/))) {
-      this.sql.exec("UPDATE emails SET opened_at=COALESCE(opened_at,?), open_count=open_count+1 WHERE token=?", nowIso(), m[1]);
-      return gif();
-    }
-    if ((m = url.pathname.match(/^\/t\/c\/([a-f0-9]+)$/))) {
-      const target = url.searchParams.get("u") || "";
-      const r = this.one("SELECT r.id, cm.body_html FROM campaign_recipients r JOIN campaigns cm ON cm.id=r.campaign_id WHERE r.token=?", m[1]);
-      if (r && /^https?:\/\//i.test(target) && (r.body_html || "").replace(/&amp;/g, "&").includes(target)) {
-        this.sql.exec("UPDATE campaign_recipients SET clicked_at=COALESCE(clicked_at,?), click_count=click_count+1, opened_at=COALESCE(opened_at,?), status='Clicked' WHERE id=?", nowIso(), nowIso(), r.id);
-        return Response.redirect(target, 302);
-      }
-      return new Response("Link not found", { status: 404 });
-    }
-    if ((m = url.pathname.match(/^\/u\/([a-f0-9]+)$/))) {
-      const c = this.one("SELECT id, email FROM contacts WHERE unsub_token=?", m[1]);
-      const company = escHtml(this.setting("company_name"));
-      const page = (msg) => new Response(`<!doctype html><meta name="viewport" content="width=device-width"><title>${company}</title><body style="font-family:system-ui;background:#f6f3ee;display:grid;place-items:center;min-height:90vh;margin:0"><div style="background:#fff;padding:32px 40px;border-radius:12px;border:1px solid #e8e1d6;max-width:420px;text-align:center"><h2 style="margin-top:0">${company}</h2><p>${msg}</p></div>`, { headers: { "content-type": "text/html; charset=utf-8" } });
-      if (!c) return page("This link is no longer valid.");
-      if (req.method === "POST" || url.searchParams.get("confirm") === "1") {
-        this.sql.exec("UPDATE contacts SET unsubscribed=1, updated_at=? WHERE id=?", nowIso(), c.id);
-        this.sql.exec("INSERT INTO interactions (contact_id,type,direction,subject,occurred_at,created_at) VALUES (?,'Note','Inbound','Unsubscribed from marketing emails',?,?)", c.id, nowIso(), nowIso());
-        return page(`<strong>${escHtml(c.email)}</strong> has been unsubscribed from marketing emails.`);
-      }
-      return page(`Unsubscribe <strong>${escHtml(c.email)}</strong> from marketing emails?<br><br><a href="?confirm=1" style="display:inline-block;background:#7a5a2f;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none">Yes, unsubscribe me</a>`);
-    }
-    return new Response("Not found", { status: 404 });
-  }
 }
+
+installMail(CrmDB, { nowIso, rid, escHtml, stripHtml, validEmail, json, fail });

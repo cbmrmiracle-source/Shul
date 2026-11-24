@@ -22,3 +22,7 @@ new_sqlite_classes = ["CrmDB"]
 #   RESEND_API_KEY  - key for sending email through resend.com (can also be entered in Settings)
 #   SETUP_CODE      - one-time code required to create the first admin account
 #   FORWARD_TO      - a verified address that inbound email is also forwarded to
+
+# Sync connected Gmail inboxes every 10 minutes
+[triggers]
+crons = ["*/10 * * * *"]

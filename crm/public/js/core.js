@@ -111,7 +111,7 @@ function modal({ title, body, size = "", submit = "Save", cancel = "Cancel", onS
     document.body.appendChild(ov);
     const form = $("form", ov);
     const close = (v) => { ov.remove(); document.removeEventListener("keydown", key); resolve(v); };
-    const key = (e) => { if (e.key === "Escape") close(null); };
+    const key = (e) => { if (e.key === "Escape" && ov === $$(".overlay").pop()) { e.stopImmediatePropagation(); close(null); } };
     document.addEventListener("keydown", key);
     $$("[data-x]", ov).forEach((b) => (b.onclick = () => close(null)));
     ov.addEventListener("mousedown", (e) => { if (e.target === ov) close(null); });
@@ -428,32 +428,131 @@ document.addEventListener("mousemove", (e) => {
 
 // ---------------------------------------------------------------- rich text editor
 function richEditor(name, html = "", { merge = true, height } = {}) {
-  const tags = ["first_name", "last_name", "full_name", "company", "city", "title", "my_name", "my_title", "my_phone", "my_company", "signature"];
+  const tags = ["first_name", "last_name", "full_name", "company", "city", "title", "my_name", "my_title", "my_phone", "my_email", "my_company", "signature"];
   return `<div class="editor-wrap" data-editor="${name}"><div class="editor-tools">
     <button type="button" data-cmd="bold" title="Bold"><b>B</b></button><button type="button" data-cmd="italic" title="Italic"><i>I</i></button><button type="button" data-cmd="underline" title="Underline"><u>U</u></button>
+    <label class="color-btn" title="Text color"><span>A</span><input type="color" data-color value="#86602d"></label>
     <button type="button" data-cmd="formatBlock" data-arg="H2" title="Heading">H</button><button type="button" data-cmd="formatBlock" data-arg="P" title="Paragraph">¶</button>
+    <button type="button" data-cmd="justifyCenter" title="Center">≡</button>
     <button type="button" data-cmd="insertUnorderedList" title="Bullets">• List</button><button type="button" data-cmd="insertOrderedList" title="Numbers">1. List</button>
-    <button type="button" data-cmd="link" title="Link">🔗 Link</button><button type="button" data-cmd="button" title="Button">▭ Button</button><button type="button" data-cmd="removeFormat" title="Clear formatting">⌫</button>
+    <button type="button" data-cmd="link" title="Link">🔗 Link</button><button type="button" data-cmd="button" title="Button">▭ Button</button><button type="button" data-cmd="image" title="Image">🖼 Image</button>
+    <button type="button" data-cmd="hr" title="Divider">―</button><button type="button" data-cmd="removeFormat" title="Clear formatting">⌫</button>
     ${merge ? `<select data-merge><option value="">Insert field…</option>${tags.map((t) => `<option value="{{${t}}}">${t.replace(/_/g, " ")}</option>`).join("")}</select>` : ""}
-    <button type="button" data-cmd="source" style="margin-left:auto" title="Edit HTML">&lt;/&gt; HTML</button></div>
-    <div class="editor" contenteditable="true" style="${height ? `min-height:${height}px` : ""}">${html}</div><textarea class="editor-src hidden"></textarea></div>`;
+    <button type="button" data-cmd="source" style="margin-left:auto" title="Edit or paste HTML">&lt;/&gt; HTML</button></div>
+    <div class="editor" contenteditable="true" style="${height ? `min-height:${height}px` : ""}">${html}</div><textarea class="editor-src hidden" placeholder="Paste or edit HTML here"></textarea></div>`;
 }
 function bindEditor(root) {
   $$("[data-editor]", root).forEach((w) => {
     const ed = $(".editor", w), src = $(".editor-src", w);
-    $$("[data-cmd]", w).forEach((b) => b.onmousedown = (e) => {
+    let saved = null;
+    const save = () => { const s = getSelection(); saved = s.rangeCount && ed.contains(s.anchorNode) ? s.getRangeAt(0).cloneRange() : null; };
+    const restore = () => { ed.focus(); const s = getSelection(); s.removeAllRanges(); if (saved) s.addRange(saved); else { const r = document.createRange(); r.selectNodeContents(ed); r.collapse(false); s.addRange(r); } };
+    const insert = (h) => { restore(); document.execCommand("insertHTML", false, h); };
+    ed.addEventListener("keyup", save); ed.addEventListener("mouseup", save); ed.addEventListener("blur", save);
+    $$("[data-cmd]", w).forEach((b) => b.onmousedown = async (e) => {
       e.preventDefault();
       const c = b.dataset.cmd;
       if (c === "source") { const on = src.classList.contains("hidden"); if (on) src.value = ed.innerHTML; else ed.innerHTML = src.value; src.classList.toggle("hidden"); ed.classList.toggle("hidden"); return; }
-      if (c === "link") { const u = prompt("Link URL (https://…)"); if (u) document.execCommand("createLink", false, u); return; }
-      if (c === "button") { const u = prompt("Button link URL (https://…)"); const t = u && prompt("Button text", "Learn more"); if (u && t) document.execCommand("insertHTML", false, `<p><a href="${esc(u)}" style="display:inline-block;background:#86602d;color:#fff;padding:10px 18px;border-radius:6px;text-decoration:none">${esc(t)}</a></p>`); return; }
+      save();
+      if (c === "link") { const u = prompt("Link URL (https://…)"); if (u) { restore(); document.execCommand("createLink", false, u); } return; }
+      if (c === "button") { const u = prompt("Button link URL (https://…)"); const t = u && prompt("Button text", "Learn more"); if (u && t) insert(`<p style="text-align:center"><a href="${esc(u)}" style="display:inline-block;background:${esc(brandColor())};color:#ffffff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">${esc(t)}</a></p>`); return; }
+      if (c === "hr") { insert(`<hr style="border:0;border-top:1px solid #e5ded2;margin:20px 0">`); return; }
+      if (c === "image") { const img = await imageDialog(); if (img) insert(img); return; }
       document.execCommand(c, false, b.dataset.arg || null);
     });
-    const mg = $("[data-merge]", w); if (mg) mg.onchange = () => { ed.focus(); document.execCommand("insertText", false, mg.value); mg.value = ""; };
+    const col = $("[data-color]", w);
+    if (col) { col.onmousedown = save; col.oninput = () => { restore(); document.execCommand("foreColor", false, col.value); }; }
+    const mg = $("[data-merge]", w); if (mg) { mg.onmousedown = save; mg.onchange = () => { restore(); document.execCommand("insertText", false, mg.value); mg.value = ""; }; }
   });
 }
 const editorValue = (root, name) => { const w = $(`[data-editor="${name}"]`, root); const src = $(".editor-src", w); return src.classList.contains("hidden") ? $(".editor", w).innerHTML : src.value; };
 const setEditor = (root, name, html) => { const w = $(`[data-editor="${name}"]`, root); $(".editor", w).innerHTML = html; $(".editor-src", w).value = html; };
+
+// ---------------------------------------------------------------- email helpers: senders, layouts, designs, images, tracking
+const brandColor = () => (/^#[0-9a-f]{3,8}$/i.test(S.settings.brand_color || "") ? S.settings.brand_color : "#86602d");
+const logoHtml = () => (S.settings.logo_url ? `<img src="${esc(S.settings.logo_url)}" alt="${esc(S.settings.company_name)}" style="max-height:44px;max-width:220px;display:block;border:0">` : `<span style="font-size:19px;font-weight:bold;color:${brandColor()};font-family:Arial,Helvetica,sans-serif">${esc(S.settings.company_name)}</span>`);
+const brandize = (html) => String(html || "").replace(/\{\{\s*brand_color\s*\}\}/g, brandColor()).replace(/\{\{\s*logo\s*\}\}/g, logoHtml());
+const LAYOUTS = [["plain", "Personal letter — looks like a normal email"], ["branded", "Branded — logo header & footer"], ["design", "Designed — full-width layout"]];
+function senderOpts() {
+  const o = (S.lk.mailboxes || []).filter((m) => m.status !== "Disconnected").map((m) => [m.id, `${m.email}${m.mine ? "" : ` (shared by ${m.owner_name})`}`]);
+  if (S.settings.email_ready) o.push(["resend", `Company sending — ${S.settings.email_from_address}`]);
+  return o;
+}
+const defaultSender = () => { const m = (S.lk.mailboxes || []).find((x) => x.mine && x.status !== "Disconnected"); return m ? m.id : senderOpts()[0]?.[0] ?? ""; };
+const parseAddr = (s) => { const str = String(s || ""), addr = (str.match(/[^\s<>,;"']+@[^\s<>,;"']+/) || [""])[0].toLowerCase(), name = str.replace(/<[^>]*>/, "").replace(/"/g, "").trim(); return { addr, name: name && name !== addr ? name : "" }; };
+function trackBadges(x) {
+  if (!x) return "";
+  const o = [];
+  if (x.status === "Failed") return `<span class="badge b-red" title="${esc(x.error || "")}">Failed</span>`;
+  if (x.bounced_at) o.push(`<span class="badge b-red" title="Bounced ${fmtDT(x.bounced_at)}">Bounced</span>`);
+  if (x.replied_at) o.push(`<span class="badge b-purple" title="Replied ${fmtDT(x.replied_at)}">↩ Replied</span>`);
+  if (x.clicked_at) o.push(`<span class="badge b-blue" title="First click ${fmtDT(x.clicked_at)}">Clicked${x.click_count > 1 ? " ×" + x.click_count : ""}</span>`);
+  if (x.opened_at) o.push(`<span class="badge b-green" title="First opened ${fmtDT(x.opened_at)}">Opened${x.open_count > 1 ? " ×" + x.open_count : ""}</span>`);
+  else if (!x.bounced_at) o.push(`<span class="badge" title="No open recorded yet">Not opened yet</span>`);
+  return o.join(" ");
+}
+const EV = { open: ["eye", "opened", "var(--green-soft);color:var(--green)"], click: ["link", "clicked a link in", "var(--blue-soft);color:var(--blue)"], reply: ["chat", "replied to", "var(--purple-soft);color:var(--purple)"], bounce: ["x", "bounced:", "var(--red-soft);color:var(--red)"] };
+function evItem(ev) {
+  const [ic, verb, col] = EV[ev.type] || EV.open;
+  const who = ev.contact_id ? `<a href="#/contacts/${ev.contact_id}"><b>${esc(ev.contact_name)}</b></a>` : `<b>${esc(parseAddr(ev.email).addr || "Someone")}</b>`;
+  let host = ""; try { host = ev.url ? new URL(ev.url).hostname : ""; } catch {}
+  return `<li><span class="tl-icon" style="width:28px;height:28px;background:${col.split(";")[0]};${col.split(";")[1]}">${icon(ic)}</span><div style="flex:1;min-width:0">${who} ${verb} <span class="muted">“${esc(ev.subject || "")}”</span>${ev.campaign_name ? ` <span class="tag">${esc(ev.campaign_name)}</span>` : ""}<div class="small muted">${ago(ev.at)}${host ? " · " + esc(host) : ""}</div></div></li>`;
+}
+async function previewEmail(o) {
+  const p = await POST("/api/emails/preview", o);
+  await modal({ title: "Preview", size: "wide", submit: null, cancel: "Close",
+    body: `<div class="toolbar"><div class="seg"><button type="button" class="on" data-w="100%">Desktop</button><button type="button" data-w="390px">Phone</button></div><span class="small muted">Subject: <b>${esc(p.subject)}</b>${p.sample ? ` · shown as it would look for ${esc(p.sample)}` : ""}</span></div>
+      <div style="background:var(--surface2);border-radius:8px;padding:8px;text-align:center"><iframe class="preview" sandbox="allow-same-origin allow-popups" style="width:100%;max-width:100%;transition:width .2s"></iframe></div>`,
+    onOpen: (f) => { const ifr = $("iframe", f); ifr.srcdoc = p.html; $$("[data-w]", f).forEach((b) => (b.onclick = () => { $$("[data-w]", f).forEach((x) => x.classList.toggle("on", x === b)); ifr.style.width = b.dataset.w; })); } });
+}
+function pickDesign() {
+  const ds = S.lk.templates.filter((t) => t.layout === "design");
+  if (!ds.length) { toast("No designs yet"); return Promise.resolve(null); }
+  return modal({ title: "Choose a design", size: "wide", submit: null, cancel: "Cancel",
+    body: `<div class="design-grid">${ds.map((t, i) => `<button type="button" class="design-card" data-d="${i}"><div class="design-thumb"><iframe sandbox="" tabindex="-1" scrolling="no"></iframe></div><b>${esc(t.name.replace(/^Design · /, ""))}</b><span class="small muted">${esc((t.subject || "").replace(/\{\{\s*(first_name|company|my_company)\s*\}\}/g, (m, k) => ({ first_name: "Priya", company: "Rustic Events", my_company: S.settings.company_name }[k])))}</span></button>`).join("")}</div>
+      <p class="hint">Designs use your brand color and logo (Settings → Email). Change any text, add your own product photos with 🖼 Image, or save your own designs under Email templates.</p>`,
+    onOpen: (f, close) => {
+      $$(".design-card iframe", f).forEach((ifr, i) => (ifr.srcdoc = `<body style="margin:0;background:#f4f1ec;padding:14px">${brandize(ds[i].body_html).replace(/\{\{\s*([a-z_]+)\s*\}\}/g, (m, k) => ({ first_name: "Priya", company: "Rustic Events", signature: esc(S.me.name), my_company: esc(S.settings.company_name) }[k] ?? ""))}</body>`));
+      $$("[data-d]", f).forEach((b) => (b.onclick = () => close(ds[+b.dataset.d])));
+    } });
+}
+async function uploadImage(file, maxW = 1200) {
+  if (!/^image\/(png|jpe?g|gif|webp)$/.test(file.type)) throw new Error("Choose a PNG, JPG, GIF or WebP image");
+  let blob = file;
+  if (file.type !== "image/gif") {
+    const bmp = await createImageBitmap(file), scale = Math.min(1, maxW / bmp.width);
+    if (scale < 1 || file.size > 800000) {
+      const c = document.createElement("canvas"); c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+      c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+      blob = await new Promise((r) => c.toBlob(r, file.type === "image/png" && file.size < 1000000 ? "image/png" : "image/jpeg", 0.85));
+    }
+  }
+  if (blob.size > 1500000) throw new Error("That image is too large, even after resizing");
+  const data = await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(String(fr.result).split(",")[1]); fr.readAsDataURL(blob); });
+  return POST("/api/files", { name: file.name, mime: blob.type || file.type, data });
+}
+async function imageDialog() {
+  const lib = await GET("/api/files").catch(() => ({ rows: [] }));
+  return modal({ title: "Insert image", submit: "Insert",
+    body: `<div class="form-grid"><label class="f full"><span>Upload from your computer</span><input type="file" accept="image/png,image/jpeg,image/gif,image/webp" data-file><div class="hint">Large photos are resized automatically. Images are hosted by your CRM so they show up in every inbox.</div></label>
+      ${lib.rows.length ? `<div class="full"><span class="small muted" style="font-weight:600">…or pick a previous upload</span><div class="img-lib">${lib.rows.slice(0, 24).map((f) => `<button type="button" data-lib="${esc(f.url)}" title="${esc(f.name)}"><img src="${esc(f.url)}" alt=""></button>`).join("")}</div></div>` : ""}
+      <label class="f full"><span>…or image web address</span><input type="url" name="url" placeholder="https://…"></label>
+      <label class="f"><span>Size</span><select name="w"><option value="100%">Full width</option><option value="50%">Half width</option><option value="160px">Small</option></select></label>
+      <label class="f"><span>Alignment</span><select name="al"><option value="center">Center</option><option value="left">Left</option></select></label>
+      <label class="f"><span>Description (alt text)</span><input type="text" name="alt" placeholder="e.g. Natural burlap roll"></label>
+      <label class="f"><span>Link when clicked (optional)</span><input type="url" name="link" placeholder="https://…"></label>
+      <div class="full" data-prev></div></div>`,
+    onOpen: (f) => {
+      const show = (u) => { f.url.value = u; $("[data-prev]", f).innerHTML = `<img src="${esc(u)}" style="max-width:100%;max-height:180px;border-radius:6px">`; };
+      $("[data-file]", f).onchange = safe(async (e) => { const file = e.target.files[0]; if (!file) return; $("[data-prev]", f).innerHTML = `<span class="spinner"></span> Uploading…`; const r = await uploadImage(file); show(r.url); if (!f.alt.value) f.alt.value = file.name.replace(/\.[a-z]+$/i, "").replace(/[-_]/g, " "); });
+      $$("[data-lib]", f).forEach((b) => (b.onclick = () => show(b.dataset.lib)));
+    },
+    onSubmit: (f) => {
+      if (!/^https?:\/\//.test(f.url.value)) throw new Error("Upload an image or enter its web address");
+      const img = `<img src="${esc(f.url.value)}" alt="${esc(f.alt.value)}" style="display:${f.al.value === "center" ? "block" : "inline-block"};width:${f.w.value};max-width:100%;height:auto;border:0;border-radius:6px;${f.al.value === "center" ? "margin:10px auto" : "margin:10px 0"}">`;
+      return f.link.value ? `<a href="${esc(f.link.value)}">${img}</a>` : img;
+    } });
+}
 
 // ---------------------------------------------------------------- CSV
 function parseCSV(text) {
@@ -477,7 +576,8 @@ const NAV = [
   ["Overview", [["dashboard", "Dashboard", "dashboard"]]],
   ["Customers", [["contacts", "Contacts", "contacts"], ["companies", "Companies", "company"], ["relationships", "Relationship map", "network"]]],
   ["Sales", [["pipeline", "Pipeline", "pipeline"], ["tasks", "Tasks", "tasks"], ["activities", "Activity log", "activity"], ["forecast", "Forecast", "forecast"], ["products", "Products", "box"]]],
-  ["Marketing", [["campaigns", "Campaigns", "megaphone"], ["templates", "Email templates", "template"], ["emails", "Email inbox", "mail"]]],
+  ["Email", [["inbox", "Inbox", "inbox"], ["tracking", "Email tracking", "eye"]]],
+  ["Marketing", [["campaigns", "Campaigns", "megaphone"], ["templates", "Email templates", "template"]]],
   ["Service", [["tickets", "Support tickets", "ticket"]]],
   ["Insights", [["analytics", "Analytics", "chart"]]],
   ["Admin", [["team", "Team & logins", "shield", 3], ["settings", "Settings", "settings", 3], ["audit", "Audit log", "list", 3]]],
@@ -514,7 +614,7 @@ async function updateCounts() {
   try {
     const [t, k] = await Promise.all([GET("/api/tasks" + qs({ mine: 1, view: "overdue", limit: 1 })), GET("/api/tickets" + qs({ open: 1, limit: 1 }))]);
     const set = (r, n) => { const el = $(`[data-count="${r}"]`); if (el) { el.textContent = n; el.classList.toggle("hidden", !n); } };
-    set("tasks", t.total); set("tickets", k.total);
+    set("tasks", t.total); set("tickets", k.total); set("inbox", (S.lk.mailboxes || []).filter((m) => m.mine).reduce((a, m) => a + (m.unread || 0), 0));
   } catch {}
 }
 function bindSearch() {

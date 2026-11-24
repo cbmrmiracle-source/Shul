@@ -13,8 +13,10 @@ Live: https://ics-crm.cb-mrmiracle.workers.dev
 | **Sales** | Drag-and-drop pipeline (Lead → Qualified → Sample Sent → Quote Sent → Negotiation → Won/Lost), deals with product line items from the catalog, one-click emailed quotes, lost-reason tracking, stage history |
 | **Activities & tasks** | Log calls, emails, meetings, WhatsApp, visits, samples and orders; follow-up tasks with due dates, priorities and assignment; complete timeline per contact, company and deal |
 | **Forecast** | Monthly commit / weighted / best-case forecast vs. target, 12-month won history, run rate, forecast by stage, salesperson and product category, overdue deals |
-| **Marketing** | Email campaigns with audience builder (type, rating, products, industry, tags, source, country, owner, last-contacted), merge fields, templates, test sends, open & click tracking, unsubscribe handling, “follow up non-openers” |
-| **Email** | Send one-to-one email from any contact, deal or ticket (logged automatically, opens tracked). Optional inbound: replies are logged on the contact's timeline, unknown senders become leads, `[Ticket #N]` replies go to the ticket, mail to the support address opens a ticket |
+| **Gmail inboxes** | Each user connects their own Gmail (Google sign-in) and gets a private inbox in the CRM, synced every 10 minutes. When sending, pick which account it comes from. Accounts can be shared with the team (e.g. a sales@ address). Emails with saved contacts are logged on their timeline; unknown senders can be added as contacts in one click |
+| **Email design** | Three styles: personal letter, branded (logo header/footer) and full designs. Five ready-made designs (new arrivals, price list, promotion, sample kit, newsletter) in your brand color, image upload/hosting, buttons, colors, live desktop/phone preview, paste-your-own HTML |
+| **Tracking** | Opens, link clicks, replies (detected in the sending Gmail) and bounces, for one-to-one emails and campaigns. Email tracking page with live activity feed and most-engaged contacts; badges on every timeline entry |
+| **Marketing** | Email campaigns sent from a chosen Gmail or company account, with audience builder (type, rating, products, industry, tags, source, country, owner, last-contacted), templates, test sends, unsubscribe handling, “follow up non-openers” |
 | **Customer service** | Tickets with categories, priorities, SLA due times, assignment, conversation thread, internal notes, emailed replies, satisfaction score |
 | **Analytics** | Win rate, deal size, sales cycle, funnel, lead sources, activity mix, lost reasons, team leaderboard, top customers, best-selling products, ticket SLA & CSAT, campaign performance |
 | **Admin** | You (admin) create every user with a temporary password; they must change it at first sign-in. Roles: admin, manager, sales, support, viewer. Reset passwords, deactivate users, audit log of every change |
@@ -38,12 +40,21 @@ npx wrangler deploy --var SETUP_CODE:CHOOSE-A-CODE   # the code is required to c
 
 Open the URL Wrangler prints, then create your admin account using that code. After the admin account exists, the setup page is closed for good, so later deploys don't need `--var`.
 
-### Connect email sending (Resend)
+### Connect Gmail (one-time, admin)
 
-1. Create an account at [resend.com](https://resend.com). The free plan allows 3,000 emails a month.
-2. Add and verify your business domain in Resend, using the DNS records it gives you.
-3. Create an API key, then paste it into **Settings → Email** in the CRM. Alternatively, run `npx wrangler secret put RESEND_API_KEY`.
-4. Set the *From* address (for example `sales@yourdomain.com`), then click **Send test email**.
+**Settings → Gmail** in the CRM walks you through this step by step:
+
+1. Create a Google Cloud project, then enable the **Gmail API**.
+2. Under **Google Auth Platform**, set up the app. Add the scopes `gmail.send` and `gmail.readonly`.
+3. Create an OAuth client of type **Web application**. Set its redirect URI to `https://<your-crm>/api/gmail/callback`. Settings shows the exact URI with a copy button.
+4. Paste the Client ID and Client secret into Settings.
+5. **Publish** the app. Apps left in "Testing" are disconnected by Google every 7 days. Users will see an "unverified app" screen; they click *Advanced → Go to …* to continue. If you use Google Workspace, choose *Internal* instead and you won't see that screen.
+
+After that, each user opens **Inbox → Connect Gmail**. Gmail allows about 500 emails a day per account, or 2,000 with Workspace.
+
+### Optional: company sending via Resend
+
+This is for campaigns larger than Gmail's daily limit. Create a [resend.com](https://resend.com) account, verify your domain, then paste the API key and *From* address into **Settings → Email** (or run `npx wrangler secret put RESEND_API_KEY`). It then appears as an extra *From* option.
 
 ### Receive email (optional, Cloudflare Email Routing)
 
@@ -59,7 +70,18 @@ npx wrangler dev          # http://localhost:8787
 npm test                  # API smoke test against the dev server (use a fresh .wrangler/state)
 ```
 
-The front end is plain JavaScript with no build step: `public/js/*.js` and `public/app.css`. The whole back end is in `src/index.js`. The database schema is created automatically the first time the database starts.
+To test Gmail without a real Google account, run `node test/mock-google.mjs` and create `.dev.vars` with the following:
+
+```
+GMAIL_API_BASE=http://127.0.0.1:9900
+GOOGLE_TOKEN_URL=http://127.0.0.1:9900/token
+GOOGLE_AUTH_URL=http://127.0.0.1:9900/auth
+OPEN_GRACE_MS=0
+```
+
+Then run `node test/gmail.mjs` against a fresh dev server.
+
+The front end is plain JavaScript with no build step: `public/js/*.js` and `public/app.css`. The back end is `src/index.js` (API and data), plus `src/mail.js` (Gmail, sending, layouts, tracking and inbox sync). The database schema is created automatically the first time the database starts.
 
 ## Backups
 

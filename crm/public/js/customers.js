@@ -11,6 +11,7 @@ function tlItem(it) {
     head = `<b>${esc(it.type)}${it.subject ? ": " + esc(it.subject) : ""}</b>${it.direction && it.type !== "Stage change" ? `<span class="badge">${esc(it.direction)}</span>` : ""}${it.outcome ? badge(it.outcome) : ""}`;
     sub = `${it.user_name ? esc(it.user_name) + " · " : ""}${fmtDT(it.occurred_at)}${it.duration_min ? ` · ${it.duration_min} min` : ""}${it.contact_name && !it._onContact ? ` · <a href="#/contacts/${it.contact_id}">${esc(it.contact_name)}</a>` : ""}${it.deal_title ? ` · <a href="#/deals/${it.deal_id}">${esc(it.deal_title)}</a>` : ""}`;
     body = it.body || "";
+    if (it.email_id && it.em_tracked && it.direction === "Outbound") head += " " + trackBadges({ opened_at: it.em_opened, open_count: it.em_opens, clicked_at: it.em_clicked, click_count: it.em_clicks, replied_at: it.em_replied, bounced_at: it.em_bounced });
     if (it.email_id) extra = `<button class="btn sm ghost" data-viewemail="${it.email_id}">${icon("eye")} View email</button>`;
   } else if (it.kind === "task") {
     ic = "tasks"; col = it.status === "Done" ? TL_COLOR.Order : "";
@@ -34,41 +35,79 @@ function bindTimeline(root) {
   $$("[data-expand]", root).forEach((t) => (t.onclick = () => t.classList.toggle("open")));
   $$("[data-viewemail]", root).forEach((b) => (b.onclick = () => viewEmail(+b.dataset.viewemail)));
 }
-async function viewEmail(id) {
+async function viewEmail(id, { onChange } = {}) {
   const e = await GET(`/api/emails/${id}`);
-  const html = e.body_html || `<pre style="white-space:pre-wrap;font-family:inherit">${esc(e.body_text || "")}</pre>`;
-  await modal({ title: e.subject || "(no subject)", size: "wide", submit: e.direction === "in" && e.contact_id && can(1) ? "Reply" : null, cancel: "Close",
-    body: `<dl class="props" style="margin-bottom:12px"><dt>From</dt><dd>${esc(e.from_addr)}</dd><dt>To</dt><dd>${esc(e.to_addr)}</dd><dt>Date</dt><dd>${fmtDT(e.created_at)}</dd><dt>Status</dt><dd>${badge(e.status)}${e.opened_at ? ` <span class="small muted">opened ${e.open_count}× · first ${fmtDT(e.opened_at)}</span>` : ""}${e.error ? ` <span class="small" style="color:var(--red)">${esc(e.error)}</span>` : ""}</dd></dl>
-      <iframe class="preview" sandbox="" style="height:400px"></iframe>`,
-    onOpen: (f) => { $("iframe", f).srcdoc = `<base target="_blank"><div style="font-family:Arial,sans-serif;font-size:14px;padding:8px">${html}</div>`; },
-    onSubmit: () => { setTimeout(() => composeEmail({ contact_id: e.contact_id, subject: /^re:/i.test(e.subject) ? e.subject : "Re: " + e.subject, ticket_id: e.ticket_id }), 50); },
-  });
+  const thread = e.thread?.length ? e.thread : [e];
+  const lastIn = [...thread].reverse().find((x) => x.direction === "in");
+  const replyTo = lastIn || thread[thread.length - 1];
+  const sender = parseAddr(lastIn?.from_addr || e.from_addr);
+  const knownContact = thread.find((x) => x.contact_id)?.contact_id;
+  const usable = new Set((S.lk.mailboxes || []).map((m) => m.id));
+  const canReply = can(1) && senderOpts().length;
+  const msg = (x, i) => {
+    const f = parseAddr(x.from_addr), out = x.direction === "out";
+    return `<div class="mail-msg ${out ? "out" : ""}"><div class="mail-head">${avatar(f.name || f.addr || "?", "sm")}<div style="flex:1;min-width:0"><b>${esc(f.name || f.addr)}</b> <span class="small muted">${esc(f.name ? f.addr : "")}</span>
+      <div class="small muted">to ${esc(x.to_addr || "")}${x.cc_addr ? ` · cc ${esc(x.cc_addr)}` : ""}</div></div><div class="right small muted nowrap">${fmtDT(x.created_at)}<div style="margin-top:3px">${out && x.token ? trackBadges(x) : out ? badge(x.status) : ""}</div></div></div>
+      ${x.attachments ? `<div class="small muted" style="padding:0 14px 6px">📎 ${esc(x.attachments)}</div>` : ""}<iframe class="mail-frame" data-i="${i}" sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"></iframe></div>`;
+  };
+  const res = await modal({ title: e.subject || "(no subject)", size: "wide", submit: canReply ? "Reply" : null, cancel: "Close",
+    extraFoot: knownContact ? `<a class="btn left" href="#/contacts/${knownContact}" data-x>${icon("user")} Open contact</a>` : lastIn && can(1) ? `<button type="button" class="btn left" data-addc>${icon("plus")} Add ${esc(sender.name || sender.addr)} as contact</button>` : "",
+    body: `<div class="mail-thread">${thread.map(msg).join("")}</div>
+      ${e.events?.length ? `<div class="card" style="margin-top:14px"><div class="card-h"><h3>Tracking activity</h3><span class="small muted">${e.events.length} events</span></div><ul class="list-plain">${e.events.map((ev) => `<li>${badge({ open: "Opened", click: "Clicked", reply: "Replied", bounce: "Bounced" }[ev.type])}<span style="flex:1" class="small">${ev.url ? esc(ev.url) : ev.type === "open" ? esc(/GoogleImageProxy/.test(ev.ua || "") ? "via Gmail" : /Outlook|Microsoft/i.test(ev.ua || "") ? "via Outlook" : /iPhone|iPad|Macintosh/.test(ev.ua || "") ? "via Apple device" : "") : ""}</span><span class="small muted nowrap">${fmtDT(ev.at)}</span></li>`).join("")}</ul></div>` : ""}`,
+    onOpen: (f, close) => {
+      $$(".mail-frame", f).forEach((ifr) => {
+        const x = thread[+ifr.dataset.i];
+        const body = x.body_html || `<pre style="white-space:pre-wrap;font-family:inherit;margin:0">${esc(x.body_text || "")}</pre>`;
+        ifr.onload = () => { try { ifr.style.height = Math.min(Math.max(ifr.contentDocument.documentElement.scrollHeight + 4, 60), 1400) + "px"; } catch {} };
+        ifr.srcdoc = `<base target="_blank"><style>body{margin:0;padding:6px 14px 14px;font-family:Arial,sans-serif;font-size:14px;color:#222;overflow:hidden}img{max-width:100%;height:auto}blockquote{margin:0 0 0 6px;padding-left:10px;border-left:2px solid #ddd;color:#666}</style>${body}`;
+      });
+      const ac = $("[data-addc]", f);
+      if (ac) ac.onclick = async () => { const [first, ...rest] = (sender.name || sender.addr.split("@")[0]).split(/\s+/); close(null); const r = await editRecord("contact", null, { first_name: first, last_name: rest.join(" "), email: sender.addr, lead_source: "Inbound email" }); if (r) { toast("Contact created — their emails are now linked"); onChange ? onChange() : rerender(); } };
+    },
+    onSubmit: () => true });
+  if (res === true && canReply) {
+    const quote = `<br><blockquote style="margin:0 0 0 6px;padding-left:10px;border-left:2px solid #ddd;color:#666">On ${esc(fmtDT(replyTo.created_at))}, ${esc(parseAddr(replyTo.from_addr).name || parseAddr(replyTo.from_addr).addr)} wrote:<br>${esc((replyTo.body_text || "").slice(0, 4000)).replace(/\n/g, "<br>")}</blockquote>`;
+    const to = replyTo.direction === "in" ? parseAddr(replyTo.from_addr).addr : parseAddr(replyTo.to_addr).addr;
+    await composeEmail({ to, contact_id: knownContact, subject: /^re:/i.test(e.subject || "") ? e.subject : "Re: " + (e.subject || ""), body: `<p></p>{{signature}}${quote}`,
+      mailbox_id: usable.has(replyTo.mailbox_id) ? replyTo.mailbox_id : undefined, thread_id: replyTo.mailbox_id && usable.has(replyTo.mailbox_id) ? e.thread_id : undefined, in_reply_to: replyTo.message_id_hdr, ticket_id: e.ticket_id, layout: "plain" });
+  }
+  onChange && onChange();
 }
 
 // ---------------------------------------------------------------- email compose
-async function composeEmail({ contact_id, to, subject = "", body = "", deal_id, ticket_id, company_id } = {}) {
-  if (!S.settings.email_ready) {
-    const go2 = await modal({ title: "Email isn't set up yet", size: "narrow", submit: can(3) ? "Open email settings" : null, cancel: "Close",
-      body: `<p style="margin-top:0">To send email from the CRM, an administrator needs to connect a sending service and set the “From” address under <b>Settings → Email</b>.</p>` });
-    if (go2) go("settings");
-    return;
-  }
+async function noSenderBox() {
+  const r = await modal({ title: "Connect an email account first", size: "narrow", submit: "Go to Inbox", cancel: "Close",
+    body: `<p style="margin-top:0">To send email from the CRM, connect your Gmail in <b>Inbox → Connect Gmail</b>. It takes about 30 seconds.</p>${!S.settings.google_ready ? `<div class="warn-box">An admin first needs to finish the one-time Gmail setup in Settings → Email.</div>` : ""}` });
+  if (r) go(!S.settings.google_ready && can(3) ? "settings" : "inbox");
+}
+async function composeEmail({ contact_id, to, subject = "", body = "", deal_id, ticket_id, company_id, mailbox_id, thread_id, in_reply_to, layout = "plain" } = {}) {
+  const senders = senderOpts();
+  if (!senders.length) return noSenderBox();
   const contacts = company_id ? S.lk.contacts.filter((c) => c.company_id === +company_id) : S.lk.contacts;
-  const res = await modal({ title: "New email", size: "wide", submit: "Send email",
+  const res = await modal({ title: thread_id ? "Reply" : "New email", size: "wide", submit: "Send email",
+    extraFoot: `<button type="button" class="btn left" data-preview>${icon("eye")} Preview</button>`,
     body: `<div class="form-grid">
-      <label class="f"><span>To (contact)</span><select name="contact_id">${optList(contacts.filter((c) => c.email).map((c) => [c.id, `${c.name} <${c.email}>`]), contact_id, "Choose a contact or type below…")}</select></label>
+      <label class="f"><span>From</span><select name="mailbox_id">${optList(senders, mailbox_id ?? defaultSender(), null)}</select></label>
+      <label class="f"><span>Style</span><select name="layout">${optList(LAYOUTS, layout, null)}</select></label>
+      <label class="f"><span>To (contact)</span><select name="contact_id">${optList(contacts.filter((c) => c.email).map((c) => [c.id, `${c.name} <${c.email}>`]), to ? "" : contact_id, "Choose a contact or type an address →")}</select></label>
       <label class="f"><span>…or email address</span><input type="email" name="to" value="${esc(to || "")}" placeholder="name@company.com"></label>
       <label class="f"><span>CC</span><input type="text" name="cc" placeholder="optional, comma separated"></label>
-      <label class="f"><span>Use template</span><select name="tpl">${optList(S.lk.templates.map((t) => [t.id, t.name]), "", "— none —")}</select></label>
+      <label class="f"><span>Start from a template</span><div style="display:flex;gap:6px"><select name="tpl">${optList(S.lk.templates.filter((t) => t.layout !== "design").map((t) => [t.id, t.name]), "", "— none —")}</select><button type="button" class="btn" data-designs title="Designed HTML emails">✨ Designs</button></div></label>
       <label class="f full"><span>Subject</span><input type="text" name="subject" value="${esc(subject)}" required></label>
-      <div class="full">${richEditor("body", body || "<p>Hi {{first_name}},</p><p></p><p>{{signature}}</p>")}</div>
-      <div class="full hint">Fields like {{first_name}} and {{company}} are filled in for the recipient. The email is logged on the contact's timeline and opens are tracked.</div></div>`,
-    onOpen: (f) => { bindEditor(f); $("[name=tpl]", f).onchange = (e) => { const t = S.lk.templates.find((x) => x.id === +e.target.value); if (t) { f.subject.value = t.subject || ""; setEditor(f, "body", t.body_html || ""); } }; },
+      <div class="full">${richEditor("body", brandize(body || "<p>Hi {{first_name}},</p><p></p>{{signature}}"), { height: 260 })}</div>
+      <div class="full hint">{{first_name}}, {{company}} and other fields are filled in for the recipient. Sent from your Gmail, it appears in your Gmail “Sent” folder too. Opens, link clicks and replies are tracked.</div></div>`,
+    onOpen: (f) => {
+      bindEditor(f);
+      const applyTpl = (t) => { if (!t) return; f.subject.value = t.subject || f.subject.value; setEditor(f, "body", brandize(t.body_html || "")); f.layout.value = t.layout || "plain"; };
+      f.tpl.onchange = () => applyTpl(S.lk.templates.find((x) => x.id === +f.tpl.value));
+      $("[data-designs]", f).onclick = async () => applyTpl(await pickDesign());
+      $("[data-preview]", f).onclick = safe(() => previewEmail({ layout: f.layout.value, subject: f.subject.value, body_html: editorValue(f, "body"), contact_id: f.contact_id.value || null, mailbox_id: f.mailbox_id.value }));
+    },
     onSubmit: async (f) => {
       if (!f.contact_id.value && !f.to.value) throw new Error("Choose a contact or enter an email address");
-      await POST("/api/emails/send", { contact_id: f.contact_id.value || null, to: f.to.value || null, cc: f.cc.value, subject: f.subject.value, body_html: editorValue(f, "body"), deal_id, ticket_id });
+      return POST("/api/emails/send", { mailbox_id: f.mailbox_id.value, layout: f.layout.value, contact_id: f.contact_id.value || null, to: f.to.value || null, cc: f.cc.value, subject: f.subject.value, body_html: editorValue(f, "body"), deal_id, ticket_id, thread_id, in_reply_to });
     } });
-  if (res) { toast("Email sent"); rerender(); }
+  if (res) { toast(`Email sent from ${res.from}`); rerender(); }
 }
 
 // ---------------------------------------------------------------- dashboard
@@ -105,7 +144,9 @@ ROUTES.dashboard = async () => {
   <div class="grid g-main">
     <div class="card"><div class="card-h"><h3>Recent activity</h3><div class="actions"><a class="btn sm ghost" href="#/activities">Activity log →</a></div></div>
       ${d.recent.length ? `<div class="timeline">${d.recent.map((r) => tlItem({ ...r, kind: "interaction", at: r.occurred_at })).join("")}</div>` : `<div class="empty">${icon("activity")}No activity logged yet. Calls, emails and meetings show up here.</div>`}</div>
-    <div class="card"><div class="card-h"><h3>Where leads come from</h3></div><div class="card-b">${donut(d.sources)}</div></div>
+    <div class="grid" style="align-content:start"><div class="card"><div class="card-h"><h3>Email engagement</h3><div class="actions"><a class="btn sm ghost" href="#/tracking">Tracking →</a></div></div>
+      ${d.engagement?.length ? `<ul class="list-plain">${d.engagement.map(evItem).join("")}</ul>` : `<div class="empty small">${icon("eye")}Opens, clicks and replies to your emails show up here.</div>`}</div>
+    <div class="card"><div class="card-h"><h3>Where leads come from</h3></div><div class="card-b">${donut(d.sources)}</div></div></div>
   </div>`;
 };
 
@@ -266,7 +307,7 @@ async function contactDetail(id) {
         <div data-pane="deals" class="hidden">${dealsMini(deals.rows)}</div>
         <div data-pane="tasks" class="hidden">${tasksMini(tasks.rows)}</div>
         <div data-pane="tickets" class="hidden">${table([{ l: "#", f: (t) => `<a href="#/tickets/${t.id}">#${t.id}</a>` }, { l: "Subject", f: (t) => `<a href="#/tickets/${t.id}">${esc(t.subject)}</a>` }, { l: "Status", f: (t) => badge(t.status) }, { l: "Priority", f: (t) => badge(t.priority) }, { l: "Opened", f: (t) => fmtDate(t.created_at) }], tickets.rows, { empty: "No support tickets" })}</div>
-        <div data-pane="emails" class="hidden">${emails.rows.length ? `<div class="table-wrap"><table class="t"><thead><tr><th></th><th>Subject</th><th>Status</th><th>Date</th></tr></thead><tbody>${emails.rows.map((e) => `<tr class="click" data-viewem="${e.id}"><td>${e.direction === "in" ? '<span class="badge b-blue">In</span>' : '<span class="badge">Out</span>'}</td><td>${esc(e.subject)}</td><td>${badge(e.status)}${e.opened_at ? ' <span class="badge b-green">Opened</span>' : ""}</td><td class="small nowrap">${fmtDT(e.created_at)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">No emails yet</div>`}</div>
+        <div data-pane="emails" class="hidden">${emails.rows.length ? `<div class="table-wrap"><table class="t"><thead><tr><th></th><th>Subject</th><th>Status</th><th>Date</th></tr></thead><tbody>${emails.rows.map((e) => `<tr class="click" data-viewem="${e.id}"><td>${e.direction === "in" ? '<span class="badge b-blue">In</span>' : '<span class="badge">Out</span>'}</td><td>${esc(e.subject)}</td><td>${e.direction === "out" && e.tracked ? trackBadges(e) : badge(e.status)}</td><td class="small nowrap">${fmtDT(e.created_at)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty">No emails yet</div>`}</div>
       </div>
     </div>
   </div>`;
