@@ -16,8 +16,8 @@
   "vars": {
     "SELLER_ID": "ANEOVR6FCDPOY",
     "MARKETPLACE_ID": "ATVPDKIKX0DER",
-    // Cloudflare Workers Free allows 100,000 Durable Object row writes/day. Raise (e.g. to 1500000) on Workers Paid.
-    "DAILY_WRITE_BUDGET": "70000"
+    // Workers Paid includes 50M Durable Object row writes/month (~1.6M/day). Use 70000 on the free plan (100k/day account-wide).
+    "DAILY_WRITE_BUDGET": "1500000"
   },
   "observability": { "enabled": true }
 }
