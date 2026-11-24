@@ -30,18 +30,60 @@ export class Store extends DurableObject {
     super(ctx, env);
     this.ctx = ctx; this.env = env;
     this.sql = ctx.storage.sql;
-    this.sql.exec(SCHEMA);
-    for (const m of MIGRATIONS) { try { this.sql.exec(m); } catch { /* already applied */ } }
-    this.amz = new Amazon(env, (k) => this.secret(k));
-    if (!this.one(`SELECT 1 x FROM reprice_rules LIMIT 1`)) {
-      for (const r of DEFAULT_RULES) this.run(`INSERT INTO reprice_rules (name, json) VALUES (?,?)`, r.name, JSON.stringify(r));
+    // Startup must never fail, even when Cloudflare's daily storage-write limit is used up: then the
+    // upgrade simply waits for the next start.
+    const limitHit = (e: any) => /rows written|exceeded|limit/i.test(String(e?.message || e));
+    try { this.sql.exec(SCHEMA); } catch (e) { if (!limitHit(e)) throw e; }
+    let v = 0;
+    try { v = Number(this.one(`SELECT v FROM settings WHERE k='schema_version'`)?.v || 0); } catch { /* fresh */ }
+    upgrade: for (let i = v; i < MIGRATIONS.length; i++) {
+      for (const m of MIGRATIONS[i]) {
+        try { this.sql.exec(m); } catch (e) { if (limitHit(e)) break upgrade; /* else: already applied */ }
+      }
+      try { this.sql.exec(`INSERT OR REPLACE INTO settings (k, v) VALUES ('schema_version', ?)`, String(i + 1)); v = i + 1; }
+      catch { break; }
     }
+    this.schemaVersion = v;
+    this.amz = new Amazon(env, (k) => this.secret(k));
+    try {
+      if (!this.one(`SELECT 1 x FROM reprice_rules LIMIT 1`)) {
+        for (const r of DEFAULT_RULES) this.run(`INSERT INTO reprice_rules (name, json) VALUES (?,?)`, r.name, JSON.stringify(r));
+      }
+    } catch { /* storage limit: seeded on a later start */ }
   }
 
   // ---------- sql helpers ----------
   all(q: string, ...p: any[]): any[] { return [...this.sql.exec(q, ...p)]; }
   one(q: string, ...p: any[]): any { return this.all(q, ...p)[0]; }
-  run(q: string, ...p: any[]) { this.sql.exec(q, ...p); }
+  /** Rows written this invocation (Cloudflare bills/limits Durable Object storage by rows written). */
+  writes = 0;
+  schemaVersion = 0;
+  /** Daily totals table, or an equivalent live query until the upgrade that creates it has run. */
+  get totals() { return this.schemaVersion >= 2 ? "sales_totals" : "(SELECT day, SUM(units) units, SUM(revenue) revenue FROM sales_daily GROUP BY day)"; }
+  run(q: string, ...p: any[]) {
+    const c = this.sql.exec(q, ...p);
+    for (const _ of c) { /* drain */ }
+    this.writes += c.rowsWritten;
+  }
+  /** In-memory work queue / timestamps (rebuilt by the scheduler if the object restarts). */
+  offerQueue = new Map<string, { reasons: number; queuedAt: number }>();
+  checkedAt = new Map<string, number>();
+
+  writeBudget() { return Number(this.env.DAILY_WRITE_BUDGET || 70_000); }
+  writesToday() {
+    const s = this.setting<any>("writes", null);
+    const d = new Date().toISOString().slice(0, 10);
+    return (s && s.day === d ? s.n : 0) + this.writes;
+  }
+  overBudget(frac: number) { return this.writesToday() > this.writeBudget() * frac; }
+  persistWrites() {
+    if (!this.writes) return;
+    const d = new Date().toISOString().slice(0, 10);
+    const s = this.setting<any>("writes", null);
+    const n = (s && s.day === d ? s.n : 0) + this.writes + 1;
+    this.writes = 0;
+    try { this.sql.exec(`INSERT OR REPLACE INTO settings (k, v) VALUES ('writes', ?)`, JSON.stringify({ day: d, n })); } catch { /* limit */ }
+  }
 
   setting<T = any>(k: string, def: T): T {
     const r = this.one(`SELECT v FROM settings WHERE k=?`, k);
@@ -59,12 +101,15 @@ export class Store extends DurableObject {
   }
   secretGetter() { return (k: string) => this.secret(k); }
   log(area: string, msg: string) {
-    this.run(`INSERT INTO logs (ts, area, msg) VALUES (?,?,?)`, Date.now(), area, String(msg).slice(0, 1000));
+    try { this.run(`INSERT INTO logs (ts, area, msg) VALUES (?,?,?)`, Date.now(), area, String(msg).slice(0, 1000)); } catch { console.error(area, msg); }
   }
   mailLog(kind: string, subject: string, status: string, error?: string) {
-    this.run(`INSERT INTO email_log (ts, kind, subject, status, error) VALUES (?,?,?,?,?)`, Date.now(), kind, subject, status, error ?? null);
+    try { this.run(`INSERT INTO email_log (ts, kind, subject, status, error) VALUES (?,?,?,?,?)`, Date.now(), kind, subject, status, error ?? null); } catch { /* storage limit */ }
   }
   audit(user: string, action: string, detail: any) {
+    try { this.auditRaw(user, action, detail); } catch { /* storage limit */ }
+  }
+  private auditRaw(user: string, action: string, detail: any) {
     this.run(`INSERT INTO audit (ts, user, action, detail) VALUES (?,?,?,?)`, Date.now(), user, action, typeof detail === "string" ? detail : JSON.stringify(detail).slice(0, 2000));
   }
   tz(): string { return this.setting("timezone", "America/New_York"); }
@@ -90,8 +135,10 @@ export class Store extends DurableObject {
   // ---------- scheduler ----------
 
   async ensureAlarm(ms = 5_000) {
-    const cur = await this.ctx.storage.getAlarm();
-    if (!cur || cur > Date.now() + ms) await this.ctx.storage.setAlarm(Date.now() + ms);
+    try {
+      const cur = await this.ctx.storage.getAlarm();
+      if (!cur || cur > Date.now() + ms) await this.ctx.storage.setAlarm(Date.now() + ms);
+    } catch { /* storage limit */ }
   }
 
   async alarm() {
@@ -103,7 +150,8 @@ export class Store extends DurableObject {
     } catch (e: any) {
       this.log("scheduler", e.message || String(e));
     } finally {
-      await this.ctx.storage.setAlarm(Date.now() + (busy ? 11_000 : 60_000));
+      this.persistWrites();
+      try { await this.ctx.storage.setAlarm(Date.now() + (busy ? 11_000 : this.overBudget(1) ? 15 * 60_000 : 60_000)); } catch { /* storage limit; cron retries */ }
     }
   }
 
@@ -116,8 +164,8 @@ export class Store extends DurableObject {
               ON CONFLICT(name) DO UPDATE SET last_run=excluded.last_run, last_ok=CASE WHEN ? THEN excluded.last_run ELSE jobs_state.last_ok END, info=excluded.info`,
       name, Date.now(), ok ? Date.now() : null, info, ok ? 1 : 0);
   }
-  private async task(name: string, every: number, fn: () => Promise<string | void | boolean>) {
-    if (!this.due(name, every) || this.budgetLeft() < 4) return;
+  private async task(name: string, every: number, fn: () => Promise<string | void | boolean>, writeFrac = 0.85) {
+    if (!this.due(name, every) || this.budgetLeft() < 4 || this.overBudget(writeFrac)) return;
     try {
       const r = await fn();
       if (r === false) return; // unfinished multi-tick job: don't mark, continue next tick
@@ -143,7 +191,7 @@ export class Store extends DurableObject {
       if (pendingReport(this, "orders_recent")) return false;
       await requestOrders(this, "orders_recent", addDays(d, -2), d);
       return "requested";
-    });
+    }, 0.95);
     await this.task("orders_refresh", 24 * HOUR, async () => {
       if (pendingReport(this, "orders_refresh")) return false;
       await requestOrders(this, "orders_refresh", addDays(d, -20), addDays(d, -3));
@@ -152,7 +200,8 @@ export class Store extends DurableObject {
     // two-year history backfill, one 30-day window at a time
     let bf = this.setting<any>("backfill", null);
     if (!bf) { bf = { cursor: addDays(d, -3), until: addDays(d, -BACKFILL_DAYS) }; this.setSetting("backfill", bf); }
-    if (bf.cursor >= bf.until && !pendingReport(this, "orders_backfill") && this.budgetLeft() > 4) {
+    // history import pauses once half of today's storage-write budget is used (resumes after midnight UTC)
+    if (bf.cursor >= bf.until && !pendingReport(this, "orders_backfill") && this.budgetLeft() > 4 && !this.overBudget(0.5)) {
       const from = addDays(bf.cursor, -29) < bf.until ? bf.until : addDays(bf.cursor, -29);
       try { await requestOrders(this, "orders_backfill", from, bf.cursor); }
       catch (e: any) { if (!(e instanceof RateLimited)) this.log("backfill", e.message); }
@@ -171,13 +220,13 @@ export class Store extends DurableObject {
                               WHERE r.enabled=1 AND r.rule_id IS NOT NULL AND COALESCE(p.is_mrm, p.mrm_auto, 0)=0`).map((r) => r.asin);
       enqueueOffers(this, asins, REASON_REPRICE);
       return `${asins.length} ASINs queued`;
-    });
+    }, 0.97);
     const sellerCfg = this.setting("seller_alerts", { enabled: true, intervalMin: 30 });
     await this.task("sellers", (sellerCfg.intervalMin || 30) * MIN, async () => {
       const asins = this.all(`SELECT asin FROM tracked_asins`).map((r) => r.asin);
       enqueueOffers(this, asins, REASON_SELLERS);
       return `${asins.length} ASINs queued`;
-    });
+    }, 0.97);
 
     try { await processOfferBatch(this); } catch (e: any) { if (!(e instanceof RateLimited)) this.log("offers", e.message); }
     await processPriceQueue(this);
@@ -186,7 +235,7 @@ export class Store extends DurableObject {
     await maybeSendFeeEmail(this);
     if (this.due("cleanup", 24 * HOUR)) this.cleanup();
 
-    return !!(this.one(`SELECT 1 x FROM offer_queue LIMIT 1`) || this.one(`SELECT 1 x FROM price_queue WHERE status='pending' LIMIT 1`)
+    return !!(this.offerQueue.size || this.one(`SELECT 1 x FROM price_queue WHERE status='pending' LIMIT 1`)
       || this.one(`SELECT 1 x FROM image_jobs WHERE status='pending' LIMIT 1`) || this.one(`SELECT 1 x FROM report_jobs WHERE status IN ('requested','processing') LIMIT 1`)
       || this.setting("inv_pass", null));
   }
@@ -197,7 +246,6 @@ export class Store extends DurableObject {
     this.run(`DELETE FROM logs WHERE ts < ?`, cut);
     this.run(`DELETE FROM seller_history WHERE ts < ?`, Date.now() - 180 * 86_400_000);
     this.run(`DELETE FROM report_jobs WHERE created_at < ?`, cut);
-    this.run(`DELETE FROM sessions WHERE expires < ?`, Date.now());
     this.run(`DELETE FROM login_fail WHERE ts < ?`, Date.now() - HOUR);
     this.run(`DELETE FROM price_queue WHERE status<>'pending' AND created_at < ?`, cut);
     this.mark("cleanup");
@@ -210,7 +258,7 @@ export class Store extends DurableObject {
     const ids = evs.map((e) => e.id);
     const mark = (v: number) => this.run(`UPDATE seller_events SET emailed=? WHERE id IN (${ids.map(() => "?").join(",")})`, v, ...ids);
     if (!cfg.enabled || !emailProvider(this.secretGetter())) { mark(2); return; }
-    if (this.one(`SELECT 1 x FROM offer_queue LIMIT 1`) && Date.now() - evs[0].ts < 10 * MIN) return; // batch a full pass into one email
+    if (this.offerQueue.size && Date.now() - evs[0].ts < 10 * MIN) return; // batch a full pass into one email
     const sellerLink = (id: string) => `<a href="https://www.amazon.com/sp?seller=${id}">${id}</a>`;
     const rows = evs.map((e) => {
       const added = JSON.parse(e.added || "[]"), removed = JSON.parse(e.removed || "[]");
@@ -242,23 +290,41 @@ export class Store extends DurableObject {
     const url = new URL(request.url);
     await this.ensureAlarm(30_000);
     if (url.pathname === "/internal/cron") return Response.json({ ok: true });
-    if (url.protocol === "https:" && this.publicOrigin() !== url.origin) this.setSetting("public_origin", url.origin);
+    if (url.protocol === "https:" && this.publicOrigin() !== url.origin) { try { this.setSetting("public_origin", url.origin); } catch { /* limit */ } }
     try {
       const out = await this.route(request, url);
+      this.persistWrites();
       if (out instanceof Response) return out;
       return Response.json(out ?? { ok: true });
     } catch (e: any) {
+      if (/rows written|exceeded allowed/i.test(String(e?.message))) {
+        return Response.json({ error: "Cloudflare's free daily storage limit is used up, so changes can't be saved until midnight UTC. Viewing still works. (Upgrading to Workers Paid removes this limit.)" }, { status: 503 });
+      }
       const status = e instanceof HttpError ? e.status : 500;
       if (status === 500) this.log("api", `${request.method} ${url.pathname}: ${e.stack || e.message}`);
       return Response.json({ error: e.message || String(e) }, { status });
     }
   }
 
+  // Sessions are signed cookies (no database write needed to sign in). Changing a user's password or
+  // deactivating/deleting them invalidates their cookie, because the signature covers part of the password hash.
+  private async sign(data: string) {
+    const secret = this.env.SESSION_SECRET || this.env.SETUP_CODE || "mr-miracle-fba";
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
+    return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  private async makeToken(u: any) {
+    const exp = Date.now() + 30 * 86_400_000;
+    return `${u.id}.${exp}.${await this.sign(`${u.id}.${exp}.${u.pass_hash.slice(0, 24)}`)}`;
+  }
   private async session(request: Request) {
-    const m = (request.headers.get("cookie") || "").match(/(?:^|;\s*)mmfba=([a-f0-9]{64})/);
-    if (!m) return null;
-    const r = this.one(`SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token=? AND s.expires>? AND u.active=1`, m[1], Date.now());
-    return r ? { ...r, token: m[1] } : null;
+    const m = (request.headers.get("cookie") || "").match(/(?:^|;\s*)mmfba=(\d+)\.(\d+)\.([a-f0-9]{64})/);
+    if (!m || Number(m[2]) < Date.now()) return null;
+    const u = this.one(`SELECT * FROM users WHERE id=? AND active=1`, Number(m[1]));
+    if (!u) return null;
+    const expect = await this.sign(`${u.id}.${m[2]}.${u.pass_hash.slice(0, 24)}`);
+    return safeEqual(expect, m[3]) ? u : null;
   }
 
   private cookie(token: string, maxAge: number) {
@@ -272,12 +338,11 @@ export class Store extends DurableObject {
     const u = this.one(`SELECT * FROM users WHERE email=? AND active=1`, email);
     const h = await hashPassword(password || "", u?.salt);
     if (!u || !safeEqual(h.hash, u.pass_hash)) {
-      this.run(`INSERT INTO login_fail (email, ts) VALUES (?,?)`, email, Date.now());
+      try { this.run(`INSERT INTO login_fail (email, ts) VALUES (?,?)`, email, Date.now()); } catch { /* storage limit */ }
       throw new HttpError(401, "Wrong email or password.");
     }
-    const token = randomToken(32);
-    this.run(`INSERT INTO sessions (token, user_id, expires) VALUES (?,?,?)`, token, u.id, Date.now() + 30 * 86_400_000);
-    this.run(`UPDATE users SET last_login=? WHERE id=?`, Date.now(), u.id);
+    const token = await this.makeToken(u);
+    try { this.run(`UPDATE users SET last_login=? WHERE id=?`, Date.now(), u.id); } catch { /* storage limit: not critical */ }
     return new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json", "set-cookie": this.cookie(token, 30 * 86400) } });
   }
 
@@ -301,7 +366,6 @@ export class Store extends DurableObject {
     const me = await this.session(request);
     if (!me) throw new HttpError(401, "Please sign in.");
     if (path === "/api/logout" && method === "POST") {
-      this.run(`DELETE FROM sessions WHERE token=?`, me.token);
       return new Response(JSON.stringify({ ok: true }), { headers: { "content-type": "application/json", "set-cookie": this.cookie("", 0) } });
     }
     if (path === "/api/me") return { id: me.id, email: me.email, name: me.name, role: me.role };
@@ -531,7 +595,8 @@ export class Store extends DurableObject {
       const tracked = this.all(`SELECT t.asin, t.added_at, t.note, o.sellers, o.fba, o.fbm, o.ts, o.bb_seller, o.bb_price, o.we_have_bb, o.error,
           (SELECT title FROM products WHERE asin=t.asin AND title<>'' LIMIT 1) title, (SELECT image FROM products WHERE asin=t.asin AND image IS NOT NULL LIMIT 1) image,
           (SELECT MAX(ts) FROM seller_events WHERE asin=t.asin) last_change
-        FROM tracked_asins t LEFT JOIN offers_latest o ON o.asin=t.asin ORDER BY last_change DESC NULLS LAST, t.asin`);
+        FROM tracked_asins t LEFT JOIN offers_latest o ON o.asin=t.asin ORDER BY last_change DESC NULLS LAST, t.asin`)
+        .map((t) => ({ ...t, ts: Math.max(t.ts || 0, this.checkedAt.get(t.asin) || 0) || null }));
       const days = Number(q.get("days") || 14);
       const events = this.all(`SELECT e.*, (SELECT title FROM products WHERE asin=e.asin AND title<>'' LIMIT 1) title FROM seller_events e WHERE ts > ? ORDER BY ts DESC LIMIT 500`,
         Date.now() - days * 86_400_000);
@@ -643,7 +708,7 @@ export class Store extends DurableObject {
       admin();
       const id = Number(um[1]); const b = await body();
       if (b.role) { if (!ROLES.includes(b.role)) throw new HttpError(400, "Bad role"); this.run(`UPDATE users SET role=? WHERE id=?`, b.role, id); }
-      if ("active" in b) { this.run(`UPDATE users SET active=? WHERE id=?`, b.active ? 1 : 0, id); if (!b.active) this.run(`DELETE FROM sessions WHERE user_id=?`, id); }
+      if ("active" in b) { this.run(`UPDATE users SET active=? WHERE id=?`, b.active ? 1 : 0, id); }
       if (b.name !== undefined) this.run(`UPDATE users SET name=? WHERE id=?`, b.name, id);
       if (b.password) await this.setPassword(id, b.password);
       if (!this.one(`SELECT 1 x FROM users WHERE role='admin' AND active=1`)) throw new HttpError(400, "There must be at least one active admin.");
@@ -654,7 +719,6 @@ export class Store extends DurableObject {
       admin();
       const id = Number(um[1]);
       if (id === me.id) throw new HttpError(400, "You can't delete yourself.");
-      this.run(`DELETE FROM sessions WHERE user_id=?`, id);
       this.run(`DELETE FROM users WHERE id=?`, id);
       if (!this.one(`SELECT 1 x FROM users WHERE role='admin' AND active=1`)) throw new HttpError(400, "There must be at least one active admin.");
       return { ok: true };
@@ -685,14 +749,14 @@ export class Store extends DurableObject {
 
   private dashboard() {
     const d = this.salesToday(), y = addDays(d, -1);
-    const sum = (from: string, to: string) => this.one(`SELECT COALESCE(SUM(revenue),0) r, COALESCE(SUM(units),0) u FROM sales_daily WHERE day>=? AND day<=?`, from, to);
+    const sum = (from: string, to: string) => this.one(`SELECT COALESCE(SUM(revenue),0) r, COALESCE(SUM(units),0) u FROM ${this.totals} WHERE day>=? AND day<=?`, from, to);
     const monthStart = d.slice(0, 8) + "01";
     const lastMonthStart = addDays(monthStart, -1).slice(0, 8) + "01";
     const lastMonthEnd = addDays(monthStart, -1);
     const daysInMonth = Number(addDays(addDays(monthStart, 32).slice(0, 8) + "01", -1).slice(8));
     const elapsed = Number(y.slice(8)) >= 1 && y >= monthStart ? Number(y.slice(8)) : 0;
     const mtd = sum(monthStart, y);
-    const months = this.all(`SELECT substr(day,1,7) m, SUM(revenue) r, SUM(units) u FROM sales_daily WHERE day >= ? GROUP BY m ORDER BY m`, addDays(monthStart, -365).slice(0, 8) + "01");
+    const months = this.all(`SELECT substr(day,1,7) m, SUM(revenue) r, SUM(units) u FROM ${this.totals} WHERE day >= ? GROUP BY m ORDER BY m`, addDays(monthStart, -365).slice(0, 8) + "01");
     const top = this.all(`SELECT asin, SUM(CASE WHEN day=? THEN units ELSE 0 END) y, SUM(CASE WHEN day>? THEN units ELSE 0 END) l7,
         SUM(units) l30, SUM(CASE WHEN day=? THEN revenue ELSE 0 END) yr FROM sales_daily WHERE day > ? AND day <= ? GROUP BY asin ORDER BY y DESC, l7 DESC LIMIT 25`,
       y, addDays(y, -7), y, addDays(y, -30), y);
@@ -707,7 +771,7 @@ export class Store extends DurableObject {
         todaySoFar: sum(d, d),
       },
       months,
-      daily: this.all(`SELECT day, SUM(revenue) r, SUM(units) u FROM sales_daily WHERE day > ? GROUP BY day ORDER BY day`, addDays(d, -60)),
+      daily: this.all(`SELECT day, revenue r, units u FROM ${this.totals} WHERE day > ? ORDER BY day`, addDays(d, -60)),
       top: top.map((t) => ({ ...t, title: meta.byAsin.get(t.asin)?.title || "", image: meta.byAsin.get(t.asin)?.image || null,
         trend: t.l30 ? round2((t.l7 / 7) / (t.l30 / 30) * 100 - 100) : null })),
       alerts: {
@@ -727,6 +791,7 @@ export class Store extends DurableObject {
     const total = 730;
     const done = bf ? Math.max(0, Math.min(total, Math.round((Date.parse(this.salesToday()) - Date.parse(bf.cursor)) / 86_400_000))) : 0;
     return {
+      storage: { writesToday: this.writesToday(), budget: this.writeBudget() },
       connected: !!this.amz.mode(),
       email: emailProvider(this.secretGetter()),
       backfill: bf ? { daysLoaded: done, total, done: bf.cursor < bf.until, oldest: this.one(`SELECT MIN(day) d FROM sales_daily`)?.d } : null,
@@ -759,7 +824,8 @@ export class Store extends DurableObject {
       FROM products p LEFT JOIN reprice_skus r ON r.sku=p.sku LEFT JOIN offers_latest o ON o.asin=p.asin LEFT JOIN inventory i ON i.sku=p.sku
       LEFT JOIN (SELECT sku, SUM(units) u30 FROM sales_daily WHERE day > ? GROUP BY sku) s ON s.sku=p.sku
       WHERE COALESCE(p.is_mrm, p.mrm_auto, 0)=0 AND (p.status IS NULL OR p.status<>'Incomplete')
-      ORDER BY r.enabled DESC, units30 DESC, p.sku`, addDays(d, -30));
+      ORDER BY r.enabled DESC, units30 DESC, p.sku`, addDays(d, -30))
+      .map((r) => ({ ...r, offers_at: Math.max(r.offers_at || 0, this.checkedAt.get(r.asin) || 0) || null }));
     return {
       settings: this.setting("repricer", { enabled: false, dryRun: true }), rules, skus,
       log: this.all(`SELECT * FROM reprice_log ORDER BY id DESC LIMIT 300`),

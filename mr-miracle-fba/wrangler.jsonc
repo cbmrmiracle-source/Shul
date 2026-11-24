@@ -15,7 +15,9 @@
   "triggers": { "crons": ["*/5 * * * *"] },
   "vars": {
     "SELLER_ID": "ANEOVR6FCDPOY",
-    "MARKETPLACE_ID": "ATVPDKIKX0DER"
+    "MARKETPLACE_ID": "ATVPDKIKX0DER",
+    // Cloudflare Workers Free allows 100,000 Durable Object row writes/day. Raise (e.g. to 1500000) on Workers Paid.
+    "DAILY_WRITE_BUDGET": "70000"
   },
   "observability": { "enabled": true }
 }

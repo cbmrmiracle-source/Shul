@@ -105,7 +105,15 @@ ok(d1.target === 14.98, `feedback filter drops seller B → ${d1.target}`);
 // ---- time zone helpers ----
 ok(new Date(M.util.dayStart("2026-11-23")).toISOString() === "2026-11-23T08:00:00.000Z", "LA midnight (PST)");
 ok(new Date(M.util.dayStart("2026-07-01")).toISOString() === "2026-07-01T07:00:00.000Z", "LA midnight (PDT)");
-console.log(process.exitCode ? "SOME TESTS FAILED" : "ALL OK");
+// ---- write efficiency: re-importing the same report must not rewrite rows ----
+{
+  const before = S.one(`SELECT total_changes() c`).c;
+  await M.PROCESSORS.orders_recent(S, resp(`${dir}/orders.tsv`), false, { from: "2026-10-25", to: "2026-11-22" });
+  const written = S.one(`SELECT total_changes() c`).c - before;
+  ok(written === 0, `re-import of identical orders wrote ${written} rows`);
+  const t1 = S.one(`SELECT SUM(revenue) r, SUM(units) u FROM sales_totals`), t2 = S.one(`SELECT SUM(revenue) r, SUM(units) u FROM sales_daily`);
+  ok(Math.abs(t1.r - t2.r) < 1 && t1.u === t2.u, `daily totals table matches detail ($${t1.r.toFixed(2)})`);
+}
 
 // ---- price events on a known product (B07D91971R: 11.49 → 10.40 → 11.49 → 10.40 → 11.99 → 13.99) ----
 {
@@ -116,3 +124,4 @@ console.log(process.exitCode ? "SOME TESTS FAILED" : "ALL OK");
     ok(a.events.some((e) => e.day === "2026-11-06" && e.newPrice === 11.49) && a.events.some((e) => e.day === "2026-11-18" && e.newPrice === 11.99), "B07D91971R price steps detected on the right days with exact prices");
   }
 }
+console.log(process.exitCode ? "SOME TESTS FAILED" : "ALL OK");

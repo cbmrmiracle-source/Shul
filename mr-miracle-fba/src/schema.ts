@@ -3,7 +3,6 @@ export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS settings (k TEXT PRIMARY KEY, v TEXT);
 CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE NOT NULL, name TEXT, role TEXT NOT NULL,
   pass_hash TEXT NOT NULL, salt TEXT NOT NULL, active INTEGER DEFAULT 1, created_at INTEGER, last_login INTEGER);
-CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER, expires INTEGER);
 CREATE TABLE IF NOT EXISTS login_fail (email TEXT, ts INTEGER);
 CREATE TABLE IF NOT EXISTS products (sku TEXT PRIMARY KEY, asin TEXT, fnsku TEXT, title TEXT, brand TEXT, image TEXT, status TEXT,
   fulfillment TEXT, price REAL, is_mrm INTEGER, mrm_auto INTEGER DEFAULT 0, product_type TEXT, discontinued INTEGER DEFAULT 0,
@@ -12,8 +11,7 @@ CREATE INDEX IF NOT EXISTS products_asin ON products(asin);
 CREATE TABLE IF NOT EXISTS sales_daily (day TEXT, sku TEXT, asin TEXT, units INTEGER, revenue REAL, priced_units INTEGER, orders INTEGER,
   est_revenue REAL DEFAULT 0, asp_revenue REAL DEFAULT 0, asp_units INTEGER DEFAULT 0,
   last_price REAL, last_ts INTEGER, PRIMARY KEY (day, sku));
-CREATE INDEX IF NOT EXISTS sales_sku ON sales_daily(sku, day);
-CREATE INDEX IF NOT EXISTS sales_asin ON sales_daily(asin, day);
+CREATE TABLE IF NOT EXISTS sales_totals (day TEXT PRIMARY KEY, units INTEGER, revenue REAL);
 CREATE TABLE IF NOT EXISTS inventory (sku TEXT PRIMARY KEY, asin TEXT, fnsku TEXT, fulfillable INTEGER, reserved INTEGER, fc_transfer INTEGER,
   fc_processing INTEGER, customer_order INTEGER, inbound_working INTEGER, inbound_shipped INTEGER, inbound_receiving INTEGER,
   unfulfillable INTEGER, researching INTEGER, total INTEGER, updated_at INTEGER);
@@ -54,10 +52,19 @@ CREATE TABLE IF NOT EXISTS email_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts I
 CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, user TEXT, action TEXT, detail TEXT);
 `;
 
-/** Column additions for databases created by earlier versions (each is tried once; "duplicate column" errors are ignored). */
-export const MIGRATIONS = [
-  "ALTER TABLE sales_daily ADD COLUMN asp_revenue REAL DEFAULT 0",
-  "ALTER TABLE sales_daily ADD COLUMN asp_units INTEGER DEFAULT 0",
-  "ALTER TABLE sales_daily ADD COLUMN last_price REAL",
-  "ALTER TABLE sales_daily ADD COLUMN last_ts INTEGER",
+/** Versioned migrations for databases created by earlier versions (applied once, in order). */
+export const MIGRATIONS: string[][] = [
+  [
+    "ALTER TABLE sales_daily ADD COLUMN asp_revenue REAL DEFAULT 0",
+    "ALTER TABLE sales_daily ADD COLUMN asp_units INTEGER DEFAULT 0",
+    "ALTER TABLE sales_daily ADD COLUMN last_price REAL",
+    "ALTER TABLE sales_daily ADD COLUMN last_ts INTEGER",
+  ],
+  [
+    // these indexes doubled the cost of every sales write; queries use the (day, sku) key or the products table instead
+    "DROP INDEX IF EXISTS sales_sku",
+    "DROP INDEX IF EXISTS sales_asin",
+    "DROP TABLE IF EXISTS sessions",
+    "INSERT OR REPLACE INTO sales_totals (day, units, revenue) SELECT day, SUM(units), ROUND(SUM(revenue), 2) FROM sales_daily GROUP BY day",
+  ],
 ];

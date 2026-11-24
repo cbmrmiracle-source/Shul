@@ -1203,6 +1203,8 @@ PAGES.settings = async (el) => {
       </div></div>
     </div>
     <div data-p="sync" class="hidden">
+      ${d.storage ? `<div class="card"><h2>Cloudflare storage today</h2><div class="progress"><div style="width:${Math.min(100, d.storage.writesToday / d.storage.budget * 100)}%"></div></div>
+        <p class="small muted">${fmtN(d.storage.writesToday)} of ${fmtN(d.storage.budget)} database writes used today (resets midnight UTC). The history import pauses at 50% and other syncs at 85% so the dashboard keeps working.</p></div>` : ""}
       ${d.backfill ? `<div class="card"><h2>Sales history</h2><div class="progress"><div style="width:${Math.min(100, d.backfill.daysLoaded / d.backfill.total * 100)}%"></div></div>
         <p class="small muted">${d.backfill.done ? "Complete" : `Loading: ${fmtN(d.backfill.daysLoaded)} of ${d.backfill.total} days`} · oldest day loaded: ${dayFmt(d.backfill.oldest)} · ${fmtN(d.counts.salesRows)} SKU-days</p></div>` : ""}
       <div class="card flush"><div class="card-h"><h2>Scheduled jobs</h2>${canEdit() ? `<button class="sm" data-sync="all">Run everything now</button>` : ""}</div>

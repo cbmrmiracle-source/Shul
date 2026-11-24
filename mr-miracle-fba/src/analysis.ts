@@ -15,7 +15,7 @@ export function resolveSkus(S: Store, ids: string[] | null): string[] | null {
   const out = new Set<string>();
   for (const id of ids) {
     if (/^B0[A-Z0-9]{8}$/.test(id) || /^\d{9}[\dX]$/.test(id)) {
-      const rows = S.all(`SELECT DISTINCT sku FROM products WHERE asin=? UNION SELECT DISTINCT sku FROM sales_daily WHERE asin=?`, id, id);
+      const rows = S.all(`SELECT sku FROM products WHERE asin=?`, id);
       rows.forEach((r) => out.add(r.sku));
       if (!rows.length) out.add(id);
     } else out.add(id);

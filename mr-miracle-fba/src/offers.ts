@@ -9,8 +9,8 @@ const AMAZON_RETAIL = "ATVPDKIKX0DER";
 export function enqueueOffers(S: Store, asins: string[], reason: number) {
   const now = Date.now();
   for (const a of new Set(asins.filter(Boolean))) {
-    S.run(`INSERT INTO offer_queue (asin, reasons, queued_at) VALUES (?,?,?)
-           ON CONFLICT(asin) DO UPDATE SET reasons = offer_queue.reasons | excluded.reasons`, a, reason, now);
+    const cur = S.offerQueue.get(a);
+    S.offerQueue.set(a, { reasons: (cur?.reasons || 0) | reason, queuedAt: cur?.queuedAt || now });
   }
 }
 
@@ -43,7 +43,8 @@ function parseOffers(payload: any, myId: string) {
 export async function processOfferBatch(S: Store): Promise<number> {
   const last = S.setting("offers_last_batch", 0);
   if (Date.now() - last < 10_500) return 0;
-  const rows = S.all(`SELECT asin, reasons FROM offer_queue ORDER BY queued_at LIMIT 20`);
+  const rows = [...S.offerQueue.entries()].sort((a, b) => a[1].queuedAt - b[1].queuedAt).slice(0, 20)
+    .map(([asin, v]) => ({ asin, reasons: v.reasons }));
   if (!rows.length) return 0;
   S.setSetting("offers_last_batch", Date.now());
   const r = await S.amz.req("POST", "/batches/products/pricing/v0/itemOffers", null, {
@@ -65,14 +66,22 @@ export async function processOfferBatch(S: Store): Promise<number> {
     const resp = byAsin.get(row.asin);
     const code = resp?.status?.statusCode ?? 0;
     if (code === 429) continue; // leave queued, retry next batch
-    S.run(`DELETE FROM offer_queue WHERE asin=?`, row.asin);
+    S.offerQueue.delete(row.asin);
     if (!resp || code >= 300) {
       S.run(`INSERT INTO offers_latest (asin, ts, error) VALUES (?,?,?) ON CONFLICT(asin) DO UPDATE SET error=excluded.error, ts=excluded.ts`,
         row.asin, now, (resp?.body?.errors?.[0]?.message || `HTTP ${code}`).slice(0, 200));
       continue;
     }
     const o = parseOffers(resp.body.payload, myId);
-    const prev = S.one(`SELECT sellers, seller_ids FROM offers_latest WHERE asin=?`, row.asin);
+    const prev = S.one(`SELECT * FROM offers_latest WHERE asin=?`, row.asin);
+    const vals = [o.totalOffers, o.sellers, o.fba, o.fbm, o.bbSeller, o.bbPrice, o.mine?.price ?? null, o.bbSeller === myId ? 1 : 0,
+      minOf(o.offers.filter((x) => x.fba && x.sellerId !== myId).map((x) => x.landed)),
+      minOf(o.offers.filter((x) => x.sellerId !== myId).map((x) => x.landed)), JSON.stringify(o.sellerIds)];
+    const same = prev && !prev.error && Date.now() - prev.ts < 6 * 3600_000 &&
+      JSON.stringify([prev.total_offers, prev.sellers, prev.fba, prev.fbm, prev.bb_seller, prev.bb_price, prev.our_price, prev.we_have_bb, prev.lowest_fba, prev.lowest, prev.seller_ids]) === JSON.stringify(vals);
+    S.checkedAt.set(row.asin, now);
+    if (row.reasons & REASON_REPRICE) repriceAsin(S, row.asin, o);
+    if (same) continue; // nothing changed: skip the database write
     S.run(`INSERT OR REPLACE INTO offers_latest (asin, ts, total_offers, sellers, fba, fbm, bb_seller, bb_price, our_price, we_have_bb,
              lowest_fba, lowest, seller_ids, offers_json, error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL)`,
       row.asin, now, o.totalOffers, o.sellers, o.fba, o.fbm, o.bbSeller, o.bbPrice, o.mine?.price ?? null,
@@ -91,7 +100,6 @@ export async function processOfferBatch(S: Store): Promise<number> {
           now, row.asin, prev.sellers, o.sellers, JSON.stringify(added), JSON.stringify(removed));
       }
     }
-    if (row.reasons & REASON_REPRICE) repriceAsin(S, row.asin, o);
   }
   return rows.length;
 }
@@ -183,7 +191,8 @@ function repriceAsin(S: Store, asin: string, o: ReturnType<typeof parseOffers>) 
         }
       }
     }
-    S.run(`UPDATE reprice_skus SET last_run=?, last_action=? WHERE sku=?`, Date.now(), (newPrice ? `$${current?.toFixed(2)} → $${newPrice.toFixed(2)}: ` : "") + action, s.sku);
+    const lastAction = (newPrice ? `$${current?.toFixed(2)} → $${newPrice.toFixed(2)}: ` : "") + action;
+    if (lastAction !== s.last_action) S.run(`UPDATE reprice_skus SET last_run=?, last_action=? WHERE sku=?`, Date.now(), lastAction, s.sku);
     if (newPrice !== null || S.setting("repricer_log_all", false)) {
       S.run(`INSERT INTO reprice_log (ts, sku, asin, old_price, new_price, bb_price, we_had_bb, reason, status) VALUES (?,?,?,?,?,?,?,?,?)`,
         Date.now(), s.sku, asin, current ?? null, newPrice, o.bbPrice, o.bbSeller === S.amz.sellerId ? 1 : 0, action, status);
