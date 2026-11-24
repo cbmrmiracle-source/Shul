@@ -22,3 +22,6 @@ service = "commerce-mcp"
 
 [observability]
 enabled = true
+
+[vars]
+PAID_PLAN = "1"
