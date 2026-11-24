@@ -130,6 +130,15 @@ function chart(canvas, cfg) {
   return c;
 }
 const COLORS = () => [css("--c1"), css("--c2"), css("--c3"), css("--c4"), css("--c5")];
+// Multi-hue heat scale: pale yellow → orange → green → deep green (darker = better day). Returns [background, text color].
+const HEAT = [[255, 247, 188], [254, 196, 79], [173, 221, 142], [65, 171, 93], [0, 104, 55], [0, 69, 41]];
+function heat(t) {
+  if (!(t > 0)) return ["transparent", "inherit"];
+  t = Math.min(1, t);
+  const x = t * (HEAT.length - 1), i = Math.min(HEAT.length - 2, Math.floor(x)), f = x - i;
+  const c = HEAT[i].map((v, k) => Math.round(v + (HEAT[i + 1][k] - v) * f));
+  return [`rgb(${c.join(",")})`, t > 0.62 ? "#ffffff" : "#1c2330"];
+}
 
 // --------------- product picker ---------------
 let productsCache = null;
@@ -144,7 +153,7 @@ async function picker(el, { selected = [], placeholder = "All products — type 
   el.innerHTML = `<div class="picker"><div class="box"></div><div class="dd hidden"></div></div>`;
   const box = $(".box", el), dd = $(".dd", el);
   const drawBox = () => {
-    box.innerHTML = sel.map((s) => `<span class="chip">${esc(s)}<button data-x="${esc(s)}" title="Remove">×</button></span>`).join("")
+    box.innerHTML = sel.map((s) => `<span class="chip">${esc(s)}<button type="button" data-x="${esc(s)}" title="Remove">×</button></span>`).join("")
       + `<input placeholder="${sel.length ? "Add more…" : esc(placeholder)}">`;
     const inp = $("input", box);
     inp.oninput = () => drawDd(inp.value);
@@ -221,13 +230,15 @@ const ICONS = {
   inv: '<path d="M3 7l9-4 9 4v10l-9 4-9-4z M3 7l9 4 9-4M12 11v10" fill="none" stroke="currentColor" stroke-width="1.8"/>',
   img: '<rect x="3" y="3" width="18" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21" fill="none" stroke="currentColor" stroke-width="2"/>',
   gear: '<circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z" fill="none" stroke="currentColor" stroke-width="1.6"/>',
+  truck: '<path d="M1 4h14v11H1zM15 8h4l3 3v4h-7z" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="6" cy="17.5" r="2"/><circle cx="18" cy="17.5" r="2"/>',
   users: '<circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" fill="none" stroke="currentColor" stroke-width="2"/>',
 };
 const NAV = [
   ["sec", "Overview"], ["dashboard", "Dashboard", "dash"],
   ["sec", "Sales"], ["sales", "Sales analysis", "sales"], ["price", "Price vs sales", "price"], ["grid", "Daily grid", "grid"], ["compare", "Compare periods", "compare"],
   ["sec", "Pricing"], ["repricer", "Repricer", "repricer"], ["pricing", "Mr Miracle pricing", "tag"],
-  ["sec", "Monitoring"], ["fees", "FBA fee changes", "fees"], ["sellers", "Seller count", "sellers"], ["inventory", "Inventory status", "inv"],
+  ["sec", "Monitoring"], ["fees", "FBA fee changes", "fees"], ["sellers", "Seller count", "sellers"],
+  ["sec", "FBA"], ["inventory", "Inventory status", "inv"], ["shipping", "Shipping", "truck"],
   ["sec", "Listings"], ["images", "Image updates", "img"],
   ["sec", "Admin"], ["settings", "Settings & sync", "gear"], ["users", "Users", "users", "admin"],
 ];
@@ -388,7 +399,7 @@ PAGES.sales = async (el, params) => {
   el.innerHTML = header("Sales analysis", "Units and dollars for all products or the ones you pick", `<button id="csv">Export CSV</button>`) + `
     <div class="card"><div class="filters">
       <div class="row" id="rng"></div>
-      <label class="f" style="flex:1;min-width:280px">Products<div id="pk"></div></label>
+      <div class="f" style="flex:1;min-width:280px">Products<div id="pk"></div></div>
       <label class="f">Group by<select id="grp"><option value="asin">ASIN</option><option value="sku">SKU</option></select></label>
       <label class="f">Chart by<select id="ivl"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option></select></label>
       <label class="f">Show<select id="mrm"><option value="">All products</option><option value="1">Mr Miracle only</option><option value="0">Non–Mr Miracle</option></select></label>
@@ -453,7 +464,7 @@ PAGES.sales = async (el, params) => {
 PAGES.price = async (el, params) => {
   el.innerHTML = header("Price vs sales", "How each price change affected units and revenue") + `
     <div class="card"><div class="filters">
-      <label class="f" style="flex:1;min-width:300px">Products (one chart each)<div id="pk"></div></label>
+      <div class="f" style="flex:1;min-width:300px">Products (one chart each)<div id="pk"></div></div>
       <div class="row" id="rng"></div>
       <label class="f" title="How many days before and after each price change to compare">Compare window<select id="win"><option>7</option><option selected>14</option><option>21</option><option>30</option></select></label>
       <label class="f" title="Smallest price move counted as a price change">Min change<select id="th"><option value="1">1%</option><option value="2">2%</option><option value="3" selected>3%</option><option value="5">5%</option><option value="10">10%</option></select></label>
@@ -506,12 +517,14 @@ PAGES.price = async (el, params) => {
 PAGES.grid = async (el, params) => {
   el.innerHTML = header("Daily grid", "Day-by-day view, like the 2-month sheet", `<button id="csv">Export CSV</button>`) + `
     <div class="card"><div class="filters">
-      <label class="f" style="flex:1;min-width:280px">Products<div id="pk"></div></label>
+      <div class="f" style="flex:1;min-width:280px">Products<div id="pk"></div></div>
       <div class="row" id="rng"></div>
       <label class="f">Show<select id="met"><option value="units">Units</option><option value="revenue">Sales $</option><option value="price">Avg price</option></select></label>
       <label class="f">Group by<select id="grp"><option value="asin">ASIN</option><option value="sku">SKU</option></select></label>
       <label class="f">Rows<select id="lim"><option>50</option><option selected>100</option><option>300</option><option value="5000">All</option></select></label>
-    </div></div>
+      <label class="f">Color by<select id="scale"><option value="row" selected>Each product's own best day</option><option value="table">Whole table</option></select></label>
+    </div>
+    <div class="row small muted" style="margin-top:10px">Low <span class="heat-legend"></span> Best day · price view: <span class="badge" style="background:#fde68a;color:#1c2330">price up</span> <span class="badge" style="background:#bfdbfe;color:#1c2330">price down</span></div></div>
     <div class="card flush" id="out"></div>`;
   let ids = (params.get("ids") || "").split(",").filter(Boolean), data = null;
   const load = debounce(async () => {
@@ -520,8 +533,9 @@ PAGES.grid = async (el, params) => {
     data = await GET("/grid" + qs({ from, to, ids: ids.join(","), metric: $("#met").value, group: $("#grp").value }));
     const met = $("#met").value, lim = Number($("#lim").value);
     const items = data.items.slice(0, lim);
-    let max = 0; items.forEach((it) => Object.values(it.cells).forEach((v) => { if (v > max) max = v; }));
-    const brand = css("--c1");
+    const scope = $("#scale").value; // "row" = each product against its own best day
+    let tableMax = 0; items.forEach((it) => Object.values(it.cells).forEach((v) => { if (v > tableMax) tableMax = v; }));
+    items.forEach((it) => { it.rowMax = Math.max(0, ...Object.values(it.cells).map((v) => v || 0)); });
     const cell = (it, d, i) => {
       const v = it.cells[d];
       if (v === undefined || v === null) return `<td class="cell-heat faint">${met === "price" ? "" : "0"}</td>`;
@@ -529,10 +543,13 @@ PAGES.grid = async (el, params) => {
         const next = data.days.slice(i + 1).find((x) => it.cells[x] !== undefined && it.cells[x] !== null);
         const pv = next ? it.cells[next] : null;
         const ch = pv !== null && Math.abs(v - pv) / pv > 0.02;
-        return `<td class="cell-heat ${ch ? "pchg" : ""}" title="${ch ? `Changed from ${fmt$(pv)}` : ""}">${fmt$(v)}</td>`;
+        const up = ch && v > pv;
+        return `<td class="cell-heat ${ch ? "pchg" : ""}" style="${ch ? `background:${up ? "#fde68a" : "#bfdbfe"};color:#1c2330` : ""}" title="${ch ? `Changed from ${fmt$(pv)}` : ""}">${fmt$(v)}</td>`;
       }
-      const a = max ? Math.min(0.55, v / max * 0.6) : 0;
-      return `<td class="cell-heat" style="background:color-mix(in srgb, ${brand} ${Math.round(a * 100)}%, transparent)">${met === "revenue" ? fmt$0(v) : fmtN(v)}</td>`;
+      const max = scope === "row" ? it.rowMax : tableMax;
+      const t = max ? v / max : 0;
+      const [bg, fg] = heat(t);
+      return `<td class="cell-heat" style="background:${bg};color:${fg}" title="${Math.round(t * 100)}% of ${scope === "row" ? "this product's best day" : "the table's best day"}">${met === "revenue" ? fmt$0(v) : fmtN(v)}</td>`;
     };
     $("#out").innerHTML = `<div class="tbl-wrap tall"><table class="t"><thead><tr><th class="sticky-col">Product</th><th class="n">${met === "price" ? "" : "Sum"}</th>
       ${data.days.map((d) => `<th class="n">${dayShort(d)}<div class="faint" style="font-weight:500">${wd(d)}</div></th>`).join("")}</tr></thead>
@@ -543,7 +560,7 @@ PAGES.grid = async (el, params) => {
   });
   const rng = rangeCtl($("#rng"), "60", load);
   await picker($("#pk"), { selected: ids, onChange: (s) => { ids = s; load(); } });
-  ["#met", "#grp", "#lim"].forEach((s) => $(s).onchange = load);
+  ["#met", "#grp", "#lim", "#scale"].forEach((s) => $(s).onchange = load);
   $("#csv").onclick = () => data && downloadCsv("daily-grid.csv", ["Product", "Title", "Sum", ...data.days], data.items.map((it) => [it.key, it.title, it.total, ...data.days.map((d) => it.cells[d] ?? 0)]));
   load();
 };
@@ -556,7 +573,7 @@ PAGES.compare = async (el) => {
       <label class="f">Range 1 from<input type="date" id="a1" value="${addDays(y, -27)}"></label><label class="f">to<input type="date" id="a2" value="${y}"></label>
       <label class="f">Range 2 from<input type="date" id="b1" value="${addDays(y, -55)}"></label><label class="f">to<input type="date" id="b2" value="${addDays(y, -28)}"></label>
       <label class="f">Quick<select id="qk"><option value="">—</option><option value="7">Last 7 vs prior 7</option><option value="14">Last 14 vs prior 14</option><option value="28" selected>Last 28 vs prior 28</option><option value="30">Last 30 vs prior 30</option><option value="yoy">Last 30 vs same 30 last year</option></select></label>
-      <label class="f" style="flex:1;min-width:260px">Products<div id="pk"></div></label>
+      <div class="f" style="flex:1;min-width:260px">Products<div id="pk"></div></div>
       <label class="f">Group by<select id="grp"><option value="asin">ASIN</option><option value="sku">SKU</option></select></label>
     </div></div>
     <div class="grid g4" id="kpis" style="margin-bottom:16px"></div>
@@ -606,62 +623,159 @@ PAGES.compare = async (el) => {
 PAGES.inventory = async (el, params) => {
   const d = await GET("/inventory");
   const s = d.settings;
-  let f = params.get("f") || "all", term = "", brand = "";
-  el.innerHTML = header("FBA inventory status", `Live from Amazon · updated ${ago(d.syncedAt)}`, `<button id="set">Settings / rules</button><button id="csv">Export CSV</button>`) + `
+  let f = params.get("f") || "all", term = "", brand = "", sortBy = f === "low" ? "toShip" : "l30";
+  const send = new Map(); // sku -> qty to send
+  el.innerHTML = header("FBA inventory status", `Live from Amazon · updated ${ago(d.syncedAt)}`,
+    `<button id="set">Settings / rules</button><button id="csv">Export CSV</button>`) + `
     <div class="card"><div class="row between">
-      <div class="seg" id="tabs">${[["all", "All inventory"], ["low", "Needs shipping"], ["oos", "Out of stock"], ["inactive", "Inactive"], ["discontinued", "Discontinued"], ["direct", "Direct to FBA list"]].map(([k, l]) => `<button data-f="${k}" class="${k === f ? "on" : ""}">${l} <span class="faint" data-c="${k}"></span></button>`).join("")}</div>
-      <div class="row"><select id="brand"><option value="">All brands</option><option value="1">Mr Miracle</option><option value="0">Other</option></select><input id="q" placeholder="Search SKU, ASIN, title" style="width:220px"></div>
+      <div class="seg" id="tabs">${[["all", "All inventory"], ["low", "Needs shipping"], ["oos", "Out of stock"], ["inactive", "Inactive"], ["discontinued", "Discontinued"], ["direct", "Direct to FBA"], ["errors", "Errors"]].map(([k, l]) => `<button data-f="${k}" class="${k === f ? "on" : ""}">${l} <span class="faint" data-c="${k}"></span></button>`).join("")}</div>
+      <div class="row" id="filters"><select id="brand"><option value="">All brands</option><option value="1">Mr Miracle</option><option value="0">Other</option></select>
+        <label class="row small muted" style="gap:6px">Sort by<select id="sort">
+          <option value="toShip">Qty to ship (most first)</option><option value="daysShipped">Days of stock (fewest first)</option>
+          <option value="l30">Sold last 30 days</option><option value="fulfillable">Sellable units</option><option value="total">Total in FBA</option><option value="sku">SKU A–Z</option></select></label>
+        <input id="q" placeholder="Search SKU, ASIN, title" style="width:200px"></div>
     </div>
-    <div class="small muted" style="margin-top:10px">Rules: min ${s.minDays} days · alert above ${s.maxAlert} days · fill to ${s.maxDays} days · send ${s.daysToSend} days · forecast ${s.forecastDays} days ahead · ${s.includeShipmentCreated ? "includes" : "excludes"} “shipment created”. Average 30-day sales = higher of last-30 and (L7×4 + L14×2 + L30)/3, same as your sheet.</div></div>
-    <div class="card flush" id="tbl"></div>`;
-  const count = (k) => d.rows.filter((r) => match(r, k)).length;
-  const match = (r, k) => k === "all" ? !r.discontinued : k === "low" ? r.state === "low" && r.toShip > 0 : k === "oos" ? r.state === "oos" && !r.discontinued : k === "inactive" ? r.state === "inactive" : k === "discontinued" ? r.discontinued : k === "direct" ? r.directFba && !r.discontinued : true;
-  $$("[data-c]").forEach((x) => x.textContent = count(x.dataset.c));
-  const dayCls = (v) => v === null ? "" : v <= s.minDays ? "bad" : v <= s.maxAlert ? "warn" : "good";
+    <div class="row small" style="margin-top:12px;gap:14px;flex-wrap:wrap">
+      <span><span class="pill bad">≤ ${s.minDays} days</span> below minimum — ship now</span>
+      <span><span class="pill warn">≤ ${s.maxAlert} days</span> getting low</span>
+      <span><span class="pill good">&gt; ${s.maxAlert} days</span> healthy</span>
+      <span class="muted"><b>Direct to FBA</b> = your "Direct to FBA" list from the sheet (products you ship straight to Amazon) · <b>Discontinued</b> = no longer restocked (hidden from All, no qty to ship)</span>
+    </div></div>
+    <div class="card hidden" id="sendbar" style="position:sticky;top:8px;z-index:20;border-color:var(--brand-2)"><div class="row between">
+      <div><b id="sendcount">0 products</b> <span class="muted" id="sendunits"></span></div>
+      <div class="row"><button id="sendclear">Clear</button><button class="primary" id="sendgo">Create send list →</button></div></div></div>
+    <div id="body"></div>`;
+  $("#sort").value = sortBy;
+  const today0 = todayLA();
+  const match = (r, k) => k === "all" ? !r.discontinued : k === "low" ? r.state === "low" && r.toShip > 0 && !r.discontinued : k === "oos" ? r.state === "oos" && !r.discontinued : k === "inactive" ? r.state === "inactive" : k === "discontinued" ? r.discontinued : k === "direct" ? r.directFba && !r.discontinued : true;
+  const counts = () => $$("[data-c]").forEach((x) => { if (x.dataset.c !== "errors") x.textContent = d.rows.filter((r) => match(r, x.dataset.c)).length; });
+  counts();
+  const pill = (v) => v === null ? `<span class="faint">—</span>` : `<span class="pill ${v <= s.minDays ? "bad" : v <= s.maxAlert ? "warn" : "good"}">${fmtN(v)}</span>`;
   const save = async (sku, patch) => { try { await api("PATCH", "/products", { sku, ...patch }); toast("Saved"); } catch (e) { toast(e.message, true); } };
+  const STATE = { ok: ["In stock", "good"], low: ["Ship soon", "bad"], oos: ["Out of stock", "bad"], inactive: ["Inactive", "warn"], discontinued: ["Discontinued", ""] };
+  const updSend = () => {
+    const units = [...send.values()].reduce((a, b) => a + b, 0);
+    $("#sendbar").classList.toggle("hidden", !send.size);
+    $("#sendcount").textContent = `${send.size} product${send.size === 1 ? "" : "s"} to send`;
+    $("#sendunits").textContent = `· ${fmtN(units)} units`;
+  };
+  $("#sendclear").onclick = () => { send.clear(); updSend(); draw(); };
+  $("#sendgo").onclick = async () => {
+    try {
+      const r = await api("POST", "/ship/plans", { name: `Send list ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })}`, items: [...send].map(([sku, qty]) => ({ sku, qty })) });
+      location.hash = "#/shipping?id=" + r.id;
+    } catch (e) { toast(e.message, true); }
+  };
+
+  const drawErrors = async () => {
+    $("#filters").classList.add("hidden");
+    const list = await GET("/inv-errors");
+    $("#body").innerHTML = `<div class="card"><h2>Inventory errors</h2>
+      <p class="small muted" style="margin-top:-6px">Units Amazon shows that you can't count on (miscounts, damaged, lost in receiving…). They're subtracted from "Days of stock including shipped" until the end date, then stop counting automatically.</p>
+      ${canEdit() ? `<div class="filters"><div class="f" style="flex:1;min-width:260px">Product<div id="epk"></div></div>
+        <label class="f">Units<input type="number" id="eq" class="w-num" min="1"></label>
+        <label class="f">Counts until<input type="date" id="ee" value="${addDays(today0, 14)}"></label>
+        <label class="f" style="flex:1;min-width:180px">Note<input id="en" placeholder="e.g. 10 units lost at receiving, case open"></label>
+        <button class="primary" id="eadd">Add error</button></div>` : ""}</div>
+      <div class="card flush" id="et"></div>`;
+    let esku = null;
+    if (canEdit()) {
+      await picker($("#epk"), { single: true, placeholder: "Search SKU, ASIN or title…", onChange: (x) => esku = x[0] || null });
+      $("#eadd").onclick = async () => {
+        try { await api("POST", "/inv-errors", { sku: esku, qty: $("#eq").value, endDay: $("#ee").value, note: $("#en").value }); toast("Added"); drawErrors(); }
+        catch (e) { toast(e.message, true); }
+      };
+    }
+    table($("#et"), [
+      { k: "sku", l: "Product", f: (r) => prodCell(r), cls: "prod" },
+      { k: "qty", l: "Units", n: 1, f: (r) => `<b>${fmtN(r.qty)}</b>` },
+      { k: "note", l: "Note", f: (r) => `<span class="small">${esc(r.note || "")}</span>` },
+      { k: "start_day", l: "From", f: (r) => dayFmt(r.start_day) },
+      { k: "end_day", l: "Until", f: (r) => canEdit() ? `<input type="date" data-end="${r.id}" value="${r.end_day}">` : dayFmt(r.end_day) },
+      { k: "active", l: "Status", f: (r) => r.end_day >= today0 ? `<span class="badge warn">counting</span>` : `<span class="badge">ended</span>`, sort: (r) => r.end_day >= today0 ? 1 : 0 },
+      { k: "created_by", l: "Added by", f: (r) => `<span class="small">${esc(r.created_by || "")}</span>` },
+      { k: "x", l: "", noSort: 1, f: (r) => canEdit() ? `<button class="sm danger" data-del="${r.id}">Remove</button>` : "" },
+    ], list, {
+      sort: "active", tall: false, empty: "No errors recorded.", after: (t) => {
+        $$("[data-end]", t).forEach((i) => i.onchange = async () => { await api("PATCH", "/inv-errors/" + i.dataset.end, { endDay: i.value }); toast("Saved"); });
+        $$("[data-del]", t).forEach((b) => b.onclick = async () => { await api("DELETE", "/inv-errors/" + b.dataset.del); drawErrors(); });
+      },
+    });
+  };
+
   const draw = () => {
+    if (f === "errors") return drawErrors();
+    $("#filters").classList.remove("hidden");
     let rows = d.rows.filter((r) => match(r, f));
     if (brand) rows = rows.filter((r) => String(r.mrm) === brand);
     if (term) rows = rows.filter((r) => (r.sku + r.asin + r.title + r.fnsku).toLowerCase().includes(term));
+    $("#body").innerHTML = `<div class="card flush" id="tbl"></div>`;
     table($("#tbl"), [
-      { k: "sku", l: "Product", f: (r) => prodCell(r), cls: "prod", sticky: 1 },
+      { k: "send", l: canEdit() ? `<span title="Tick to add to a send list">Send</span>` : "", noSort: 1, f: (r) => canEdit() && !r.discontinued ? `<label class="chk"><input type="checkbox" data-send="${esc(r.sku)}" ${send.has(r.sku) ? "checked" : ""}></label> <input class="w-num" style="width:64px" type="number" min="0" data-sq="${esc(r.sku)}" value="${send.get(r.sku) ?? (r.toShip || "")}" placeholder="qty">` : "" },
+      { k: "sku", l: "Product", f: (r) => prodCell(r), cls: "prod", sort: (r) => r.sku.toLowerCase() },
+      { k: "state", l: "Status", f: (r) => { const [l, c] = STATE[r.discontinued ? "discontinued" : r.state] || STATE.ok; return `<span class="badge ${c}">${l}</span>`; } },
+      { k: "toShip", l: "Qty to ship", n: 1, f: (r) => r.toShip ? `<span class="pill info"><b>${fmtN(r.toShip)}</b></span>` : `<span class="faint">–</span>` },
+      { k: "daysShipped", l: "Days inc. shipped", n: 1, f: (r) => pill(r.daysShipped) },
+      { k: "daysSellable", l: "Days sellable", n: 1, f: (r) => pill(r.daysSellable) },
+      { k: "daysReserve", l: "Days inc. reserve", n: 1, f: (r) => pill(r.daysReserve) },
       { k: "total", l: "Total in FBA", n: 1, f: (r) => `<b>${fmtN(r.total)}</b>` },
-      { k: "fulfillable", l: "Sellable", n: 1, f: (r) => fmtN(r.fulfillable) },
+      { k: "fulfillable", l: "Sellable", n: 1, f: (r) => `<span class="good">${fmtN(r.fulfillable)}</span>` },
       { k: "reserved", l: "Reserved", n: 1, f: (r) => fmtN(r.reserved) },
-      { k: "shipped", l: "Shipped", n: 1, f: (r) => fmtN(r.shipped) },
-      { k: "receiving", l: "Receiving", n: 1, f: (r) => fmtN(r.receiving) },
-      { k: "unfulfillable", l: "Unfulfillable", n: 1, f: (r) => fmtN(r.unfulfillable) },
+      { k: "shipped", l: "Shipped", n: 1, f: (r) => r.shipped ? `<span class="info">${fmtN(r.shipped)}</span>` : "0" },
+      { k: "receiving", l: "Receiving", n: 1, f: (r) => r.receiving ? `<span class="info">${fmtN(r.receiving)}</span>` : "0" },
       { k: "shipmentCreated", l: "Shipment created", n: 1, f: (r) => fmtN(r.shipmentCreated) },
       { k: "fcTransfer", l: "FC transfer", n: 1, f: (r) => fmtN(r.fcTransfer) },
-      { k: "errors", l: "Errors", n: 1, f: (r) => canEdit() ? `<input class="w-num" style="width:60px" type="number" data-err="${esc(r.sku)}" value="${r.errors || 0}">` : fmtN(r.errors) },
+      { k: "unfulfillable", l: "Unfulfillable", n: 1, f: (r) => r.unfulfillable ? `<span class="bad">${fmtN(r.unfulfillable)}</span>` : "0" },
+      { k: "errors", l: "Errors", n: 1, f: (r) => r.errors ? `<a class="bad" href="#/inventory?f=errors">−${fmtN(r.errors)}</a>` : `<span class="faint">0</span>` },
       { k: "l7", l: "Sold 7d", n: 1, f: (r) => fmtN(r.l7) },
       { k: "l14", l: "14d", n: 1, f: (r) => fmtN(r.l14) },
       { k: "l30", l: "30d", n: 1, f: (r) => fmtN(r.l30) },
       { k: "avg30", l: "Avg 30d", n: 1, f: (r) => fmtN(r.avg30) },
-      { k: "daysSellable", l: "Days sellable", n: 1, f: (r) => `<span class="${dayCls(r.daysSellable)}">${fmtN(r.daysSellable)}</span>` },
-      { k: "daysReserve", l: "Days inc. reserve", n: 1, f: (r) => `<span class="${dayCls(r.daysReserve)}">${fmtN(r.daysReserve)}</span>` },
-      { k: "daysShipped", l: "Days inc. shipped", n: 1, f: (r) => `<b class="${dayCls(r.daysShipped)}">${fmtN(r.daysShipped)}</b>` },
-      { k: "toShip", l: "Qty to ship", n: 1, f: (r) => r.toShip ? `<b>${fmtN(r.toShip)}</b>` : `<span class="faint">–</span>` },
       { k: "buyBox", l: "Buy Box", f: (r) => r.buyBox ? `<span class="badge ${r.buyBox === "won" ? "good" : "bad"}">${r.buyBox}</span>` : `<span class="faint">—</span>` },
       { k: "unitProfit", l: "Profit/unit", n: 1, f: (r) => `<span class="${signCls(r.unitProfit)}">${fmt$(r.unitProfit)}</span>` },
       { k: "lowInvFee", l: "Low-inv fee", f: (r) => /^y/i.test(r.lowInvFee) ? `<span class="badge warn">Yes</span>` : `<span class="faint">${esc(r.lowInvFee || "—")}</span>` },
       { k: "fnsku", l: "FNSKU", f: (r) => `<span class="mono">${esc(r.fnsku || "")}</span>` },
-      { k: "flags", l: "Direct / Disc.", noSort: 1, f: (r) => canEdit() ? `<label class="chk" title="Direct to FBA list"><input type="checkbox" data-dir="${esc(r.sku)}" ${r.directFba ? "checked" : ""}>D</label> <label class="chk" title="Discontinued"><input type="checkbox" data-disc="${esc(r.sku)}" ${r.discontinued ? "checked" : ""}>X</label>` : "" },
+      { k: "directFba", l: `<span title="Your 'Direct to FBA' list">Direct to FBA</span>`, f: (r) => canEdit() ? `<input type="checkbox" data-dir="${esc(r.sku)}" ${r.directFba ? "checked" : ""} title="On my Direct-to-FBA list">` : r.directFba ? "✓" : "", sort: (r) => r.directFba ? 1 : 0 },
+      { k: "discontinued", l: `<span title="No longer restocked">Discontinued</span>`, f: (r) => canEdit() ? `<input type="checkbox" data-disc="${esc(r.sku)}" ${r.discontinued ? "checked" : ""} title="Discontinued">` : r.discontinued ? "✓" : "", sort: (r) => r.discontinued ? 1 : 0 },
     ], rows, {
-      sort: f === "low" ? "toShip" : "l30", empty: "No products here.",
+      sort: sortBy, dir: ["daysShipped", "sku"].includes(sortBy) ? 1 : -1, empty: "No products here.",
       after: (tEl) => {
-        $$("[data-err]", tEl).forEach((i) => i.onchange = () => { const r = d.rows.find((x) => x.sku === i.dataset.err); r.errors = Number(i.value); save(r.sku, { errors: Number(i.value) }); });
-        $$("[data-dir]", tEl).forEach((i) => i.onchange = () => { d.rows.find((x) => x.sku === i.dataset.dir).directFba = i.checked; save(i.dataset.dir, { directFba: i.checked }); });
-        $$("[data-disc]", tEl).forEach((i) => i.onchange = () => { d.rows.find((x) => x.sku === i.dataset.disc).discontinued = i.checked; save(i.dataset.disc, { discontinued: i.checked }); });
+        $$("tbody tr[data-i]", tEl).forEach((tr) => {
+          const r = rows[Number(tr.dataset.i)];
+          if (r) tr.classList.add("st-" + (r.discontinued ? "discontinued" : r.state));
+        });
+        $$("[data-send]", tEl).forEach((c) => c.onchange = () => {
+          const qi = $(`[data-sq="${CSS.escape(c.dataset.send)}"]`, tEl);
+          const qty = Math.round(Number(qi.value) || 0);
+          if (c.checked) { if (!qty) { toast("Enter a quantity first.", true); c.checked = false; return; } send.set(c.dataset.send, qty); }
+          else send.delete(c.dataset.send);
+          updSend();
+        });
+        $$("[data-sq]", tEl).forEach((i) => i.oninput = () => {
+          const qty = Math.round(Number(i.value) || 0);
+          const c = $(`[data-send="${CSS.escape(i.dataset.sq)}"]`, tEl);
+          if (qty > 0) { send.set(i.dataset.sq, qty); c.checked = true; } else { send.delete(i.dataset.sq); c.checked = false; }
+          updSend();
+        });
+        $$("[data-dir]", tEl).forEach((i) => i.onchange = () => { d.rows.find((x) => x.sku === i.dataset.dir).directFba = i.checked; save(i.dataset.dir, { directFba: i.checked }); counts(); });
+        $$("[data-disc]", tEl).forEach((i) => i.onchange = () => { d.rows.find((x) => x.sku === i.dataset.disc).discontinued = i.checked; save(i.dataset.disc, { discontinued: i.checked }); counts(); });
       },
     });
+    if (canEdit() && f === "low") {
+      const b = document.createElement("div");
+      b.className = "row"; b.style.margin = "0 0 10px";
+      b.innerHTML = `<button id="selall">Select all ${rows.length} with their qty to ship</button>`;
+      $("#body").prepend(b);
+      $("#selall").onclick = () => { rows.forEach((r) => { if (r.toShip > 0) send.set(r.sku, r.toShip); }); updSend(); draw(); };
+    }
   };
-  $$("#tabs button").forEach((b) => b.onclick = () => { f = b.dataset.f; $$("#tabs button").forEach((x) => x.classList.toggle("on", x === b)); draw(); });
+  $$("#tabs button").forEach((b) => b.onclick = () => { f = b.dataset.f; $$("#tabs button").forEach((x) => x.classList.toggle("on", x === b)); if (f === "low") { sortBy = "toShip"; $("#sort").value = sortBy; } draw(); });
   $("#q").oninput = debounce(() => { term = $("#q").value.toLowerCase(); draw(); }, 150);
   $("#brand").onchange = () => { brand = $("#brand").value; draw(); };
+  $("#sort").onchange = () => { sortBy = $("#sort").value; draw(); };
   $("#csv").onclick = () => downloadCsv("fba-inventory.csv",
-    ["ASIN", "SKU", "Total", "Sellable", "Reserved", "Shipped", "Receiving", "Unfulfillable", "Shipment created", "FC transfer", "Errors", "Sold 7d", "Sold 14d", "Sold 30d", "Avg 30d", "Days sellable", "Days inc reserve", "Days inc shipped", "Qty to ship", "Buy Box", "Profit/unit", "Low inv fee", "Title", "FNSKU"],
-    d.rows.filter((r) => match(r, f)).map((r) => [r.asin, r.sku, r.total, r.fulfillable, r.reserved, r.shipped, r.receiving, r.unfulfillable, r.shipmentCreated, r.fcTransfer, r.errors, r.l7, r.l14, r.l30, r.avg30, r.daysSellable, r.daysReserve, r.daysShipped, r.toShip, r.buyBox, r.unitProfit, r.lowInvFee, r.title, r.fnsku]));
+    ["ASIN", "SKU", "Status", "Qty to ship", "Days inc shipped", "Days sellable", "Days inc reserve", "Total", "Sellable", "Reserved", "Shipped", "Receiving", "Shipment created", "FC transfer", "Unfulfillable", "Errors", "Sold 7d", "Sold 14d", "Sold 30d", "Avg 30d", "Buy Box", "Profit/unit", "Low inv fee", "Title", "FNSKU", "Direct to FBA", "Discontinued"],
+    d.rows.filter((r) => match(r, f)).map((r) => [r.asin, r.sku, r.state, r.toShip, r.daysShipped, r.daysSellable, r.daysReserve, r.total, r.fulfillable, r.reserved, r.shipped, r.receiving, r.shipmentCreated, r.fcTransfer, r.unfulfillable, r.errors, r.l7, r.l14, r.l30, r.avg30, r.buyBox, r.unitProfit, r.lowInvFee, r.title, r.fnsku, r.directFba ? "yes" : "", r.discontinued ? "yes" : ""]));
   $("#set").onclick = () => {
     const m = modal(`<h2>Inventory rules</h2><div class="form-grid">
       <label class="f">Minimum days<input type="number" id="s-min" value="${s.minDays}"></label>
@@ -1108,10 +1222,224 @@ PAGES.sellers = async (el) => {
   load();
 };
 
+// ---------------- shipping (FBA inbound) ----------------
+const SHIP_STEPS = [["items", "1. Products"], ["create", "2. Create in Amazon"], ["packing", "3. Packing"], ["boxes", "4. Boxes"], ["placement", "5. Warehouses & fees"], ["transport", "6. Carrier"], ["labels", "7. Labels & ship"]];
+const STATUS_STEP = { draft: "items", creating: "create", created: "packing", packing: "packing", boxes: "boxes", placement: "placement", transport: "transport", confirmed: "labels", cancelled: "labels" };
+const STATUS_LABEL = { draft: ["Send list", ""], creating: ["Creating…", "info"], created: ["Created", "info"], packing: ["Packing", "info"], boxes: ["Enter boxes", "warn"], placement: ["Choose warehouses", "warn"], transport: ["Choose carrier", "warn"], confirmed: ["Ready to ship", "good"], cancelled: ["Cancelled", "bad"] };
+
+async function shipStep(id, action, args = {}) {
+  const m = modal(`<div class="row" style="gap:12px"><span class="spinner"></span><div><b>Working with Amazon…</b><div class="small muted">This can take up to a minute. Please keep this page open.</div></div></div>`);
+  try { return await api("POST", `/ship/plans/${id}/step`, { action, ...args }); }
+  finally { m.close(); }
+}
+
+PAGES.shipping = async (el, params) => {
+  const id = params.get("id");
+  if (id) return shipPlanPage(el, Number(id));
+  const plans = await GET("/ship/plans");
+  el.innerHTML = header("Shipping", "Send lists and FBA shipments", canEdit() ? `<button class="primary" id="new">New send list</button>` : "") + `
+    <div class="card small muted">Pick products on <a href="#/inventory?f=low">Inventory → Needs shipping</a> (tick <b>Send</b>), or start a new send list here. A send list becomes an FBA shipment step by step: Amazon chooses the warehouses, you enter the boxes, pick a carrier, then print unit and box labels.</div>
+    <div class="card flush" id="t"></div>`;
+  table($("#t"), [
+    { k: "id", l: "#", n: 1, f: (p) => p.id },
+    { k: "name", l: "Name", f: (p) => `<a href="#/shipping?id=${p.id}"><b>${esc(p.name)}</b></a>${p.last_error ? `<div class="small bad">needs attention</div>` : ""}` },
+    { k: "status", l: "Status", f: (p) => { const [l, c] = STATUS_LABEL[p.status] || [p.status, ""]; return `<span class="badge ${c}">${l}</span>`; } },
+    { k: "skus", l: "Products", n: 1, f: (p) => fmtN(p.skus) },
+    { k: "units", l: "Units", n: 1, f: (p) => fmtN(p.units) },
+    { k: "created_by", l: "Created by", f: (p) => `<span class="small">${esc(p.created_by || "")}</span>` },
+    { k: "updated_at", l: "Updated", f: (p) => `<span class="small">${ago(p.updated_at)}</span>` },
+  ], plans, { sort: "id", tall: false, empty: "No send lists yet." });
+  if (canEdit()) $("#new").onclick = async () => {
+    const m = modal(`<h2>New send list</h2><div class="f">First product<div id="np"></div></div><label class="f" style="margin-top:10px">Quantity<input type="number" id="nq" class="w-num" min="1"></label>
+      <p class="small muted">You can add more products on the next screen.</p>
+      <div class="foot"><button data-close>Cancel</button><button class="primary" id="nok">Create</button></div>`);
+    let sku = null;
+    await picker($("#np", m.el), { single: true, placeholder: "Search SKU, ASIN or title…", onChange: (x) => sku = x[0] });
+    $("#nok", m.el).onclick = async () => {
+      try { const r = await api("POST", "/ship/plans", { items: [{ sku, qty: Number($("#nq", m.el).value) }] }); m.close(); location.hash = "#/shipping?id=" + r.id; }
+      catch (e) { toast(e.message, true); }
+    };
+  };
+};
+
+async function shipPlanPage(el, id) {
+  let p = await GET(`/ship/plans/${id}`);
+  const render = async () => {
+    const cur = STATUS_STEP[p.status] || "items";
+    const curIdx = SHIP_STEPS.findIndex(([k]) => k === cur);
+    const [sl, sc] = STATUS_LABEL[p.status] || [p.status, ""];
+    const editable = p.status === "draft" && canEdit();
+    const units = p.items.reduce((s, i) => s + i.qty, 0);
+    el.innerHTML = header(esc(p.name), `<span class="badge ${sc}">${sl}</span> · ${p.items.length} products · ${fmtN(units)} units${p.inbound_plan_id ? ` · <a target="_blank" rel="noopener" href="https://sellercentral.amazon.com/fba/sendtoamazon?wf=${encodeURIComponent(p.inbound_plan_id)}">open in Seller Central</a>` : ""}`,
+      `<a class="btn" href="#/shipping">← All shipments</a><button id="pick">Print pick list</button>
+       <div class="seg"><button id="ul-letter" title="30 labels per US Letter sheet">Unit labels (Letter)</button><button id="ul-thermal" title="2.25 × 1.25 in thermal">Thermal</button></div>
+       ${canEdit() && p.status !== "cancelled" && p.inbound_plan_id ? `<button class="danger" id="cancel">Cancel in Amazon</button>` : ""}
+       ${canEdit() && (p.status === "draft" || p.status === "cancelled") ? `<button class="danger" id="del">Delete</button>` : ""}`) + `
+      <div class="steps">${SHIP_STEPS.map(([k, l], i) => `<span class="st ${p.status === "cancelled" ? "" : i < curIdx || p.status === "confirmed" ? "done" : i === curIdx ? "cur" : ""}">${l}</span>`).join("")}</div>
+      ${p.last_error ? `<div class="banner bad"><div class="txt" style="white-space:pre-wrap"><b>Amazon reported a problem:</b>\n${esc(p.last_error)}</div></div>` : ""}
+      <div id="stepbox"></div>
+      <div class="card flush"><div class="card-h"><h2>Products in this shipment</h2>${editable ? `<div class="row"><div id="addpk" style="min-width:280px"></div><input type="number" id="addq" class="w-num" placeholder="qty" min="1"><button id="add">Add</button></div>` : ""}</div><div id="items"></div></div>`;
+    table($("#items"), [
+      { k: "sku", l: "Product", f: (i) => prodCell({ ...i, asin: i.asin || i.cur_asin }), cls: "prod" },
+      { k: "fnsku", l: "FNSKU", f: (i) => `<span class="mono">${esc(i.fnsku || i.cur_fnsku || "")}</span>` },
+      { k: "fulfillable", l: "Sellable now", n: 1, f: (i) => fmtN(i.fulfillable) },
+      { k: "qty", l: "Qty to send", n: 1, f: (i) => editable ? `<input class="w-num" type="number" min="0" data-q="${esc(i.sku)}" value="${i.qty}">` : `<b>${fmtN(i.qty)}</b>` },
+      { k: "lab", l: "Labels", noSort: 1, f: (i) => `<button class="sm" data-lab="${esc(i.sku)}">Print ${fmtN(i.qty)}</button>` },
+      { k: "x", l: "", noSort: 1, f: (i) => editable ? `<button class="sm danger" data-rm="${esc(i.sku)}">Remove</button>` : "" },
+    ], p.items, {
+      sort: "sku", dir: 1, tall: false, after: (t) => {
+        $$("[data-lab]", t).forEach((b) => b.onclick = () => window.open(`/api/ship/plans/${id}/unit-labels?sku=${encodeURIComponent(b.dataset.lab)}&type=letter`, "_blank"));
+        $$("[data-q]", t).forEach((i) => i.onchange = () => saveItems(p.items.map((x) => ({ sku: x.sku, qty: x.sku === i.dataset.q ? Number(i.value) : x.qty }))));
+        $$("[data-rm]", t).forEach((b) => b.onclick = () => saveItems(p.items.filter((x) => x.sku !== b.dataset.rm).map((x) => ({ sku: x.sku, qty: x.qty }))));
+      },
+    });
+    const saveItems = async (items) => { try { p = await api("PUT", `/ship/plans/${id}/items`, { items }); render(); } catch (e) { toast(e.message, true); } };
+    if (editable) {
+      let addSku = null;
+      await picker($("#addpk"), { single: true, placeholder: "Add a product…", onChange: (x) => addSku = x[0] });
+      $("#add").onclick = () => {
+        const q = Number($("#addq").value);
+        if (!addSku || !(q > 0)) return toast("Pick a product and quantity.", true);
+        const items = p.items.filter((x) => x.sku !== addSku).map((x) => ({ sku: x.sku, qty: x.qty }));
+        items.push({ sku: addSku, qty: q }); saveItems(items);
+      };
+    }
+    $("#ul-letter").onclick = () => window.open(`/api/ship/plans/${id}/unit-labels?type=letter`, "_blank");
+    $("#ul-thermal").onclick = () => window.open(`/api/ship/plans/${id}/unit-labels?type=thermal`, "_blank");
+    $("#pick").onclick = () => {
+      const w = window.open("", "_blank");
+      w.document.write(`<!doctype html><title>Pick list – ${esc(p.name)}</title><style>body{font:13px Arial;margin:24px}table{border-collapse:collapse;width:100%}th,td{border:1px solid #999;padding:6px;text-align:left}td.n{text-align:right;font-weight:bold;font-size:15px}.b{width:24px}</style>
+        <h2>${esc(p.name)}</h2><p>${p.items.length} products · ${fmtN(units)} units · printed ${new Date().toLocaleString()}</p>
+        <table><tr><th class="b">✓</th><th>SKU</th><th>ASIN</th><th>FNSKU</th><th>Product</th><th>Qty</th></tr>
+        ${p.items.map((i) => `<tr><td></td><td>${esc(i.sku)}</td><td>${esc(i.asin || "")}</td><td>${esc(i.fnsku || "")}</td><td>${esc(i.title || "")}</td><td class="n">${i.qty}</td></tr>`).join("")}
+        </table><script>window.print()<\/script>`);
+      w.document.close();
+    };
+    if ($("#cancel")) $("#cancel").onclick = async () => {
+      if (!await confirmBox("Cancel this shipment in Amazon?", "The inbound plan and its shipments are cancelled in Seller Central. This can't be undone.", "Cancel shipment")) return;
+      try { p = await shipStep(id, "cancel"); render(); } catch (e) { toast(e.message, true); p = await GET(`/ship/plans/${id}`); render(); }
+    };
+    if ($("#del")) $("#del").onclick = async () => {
+      if (!await confirmBox("Delete this send list?", "It's removed from this system.", "Delete")) return;
+      await api("DELETE", `/ship/plans/${id}`); location.hash = "#/shipping";
+    };
+    await drawStep();
+  };
+  const run = async (action, args, confirmTitle, confirmHtml, okLabel) => {
+    if (confirmTitle && !await confirmBox(confirmTitle, confirmHtml, okLabel)) return;
+    try { p = await shipStep(id, action, args); toast("Done"); }
+    catch (e) { toast(e.message.split("\n")[0], true); p = await GET(`/ship/plans/${id}`); }
+    render();
+  };
+  const drawStep = async () => {
+    const box = $("#stepbox");
+    const d = p.data || {};
+    if (!canEdit() && p.status !== "confirmed") { box.innerHTML = ""; return; }
+    if (p.status === "draft" || p.status === "creating") {
+      const a = p.address || await GET("/ship/address");
+      const F = [["name", "Name / contact"], ["companyName", "Company"], ["addressLine1", "Street"], ["addressLine2", "Street line 2"], ["city", "City"], ["stateOrProvinceCode", "State (2 letters)"], ["postalCode", "ZIP"], ["phoneNumber", "Phone"], ["email", "Email"]];
+      box.innerHTML = `<div class="card"><h2>Ship from</h2><div class="form-grid">${F.map(([k, l]) => `<label class="f">${l}<input data-a="${k}" value="${esc(a?.[k] || "")}"></label>`).join("")}</div>
+        <p class="small muted">Unit labels: products with an X0… FNSKU get Amazon labels from you; products sold under the manufacturer barcode don't. Prep (poly bags etc.) is taken from Amazon's prep settings for each product.</p>
+        <div class="row"><button class="primary" id="create">Create shipment plan in Amazon →</button><span class="small muted">This creates a draft "Send to Amazon" plan. Nothing is charged at this step.</span></div></div>`;
+      $("#create").onclick = () => {
+        const address = Object.fromEntries($$("[data-a]").map((i) => [i.dataset.a, i.value.trim()]));
+        address.countryCode = "US";
+        run("create", { address });
+      };
+    } else if (p.status === "created" || p.status === "packing") {
+      const opts = d.packingOptions || [];
+      box.innerHTML = `<div class="card"><h2>Packing options</h2>${opts.length ? `<p class="small muted">Amazon split the products into packing groups (products in a group can share boxes).</p>
+        ${opts.map((o, i) => `<label class="chk" style="display:flex;margin:8px 0"><input type="radio" name="po" value="${esc(o.packingOptionId)}" ${i === 0 ? "checked" : ""}> ${(o.packingGroups || []).length} packing group(s) · fees ${fmt$((o.fees || []).reduce((s, f) => s + (f.value?.amount || 0), 0))} ${(o.discounts || []).length ? "· discounts available" : ""}</label>`).join("")}
+        <button class="primary" id="pc">Use this packing option →</button>` : `<button class="primary" id="pg">Get packing options →</button>`}</div>`;
+      if ($("#pg")) $("#pg").onclick = () => run("packing_generate");
+      if ($("#pc")) $("#pc").onclick = () => run("packing_confirm", { packingOptionId: $("input[name=po]:checked").value });
+    } else if (p.status === "boxes") {
+      drawBoxes(box, d);
+    } else if (p.status === "placement") {
+      const opts = d.placementOptions || [];
+      const fee = (o) => (o.fees || []).reduce((s, f) => s + (f.value?.amount || 0), 0) - (o.discounts || []).reduce((s, f) => s + (f.value?.amount || 0), 0);
+      box.innerHTML = `<div class="card"><h2>Warehouses & placement fee</h2>${opts.length ? `<p class="small muted">Amazon offers ways to split the shipment between warehouses. Fewer warehouses usually costs a higher placement fee.</p>
+        ${opts.map((o, i) => `<label class="card" style="display:block;cursor:pointer;margin:8px 0;padding:12px"><div class="row between"><div class="row"><input type="radio" name="pl" value="${esc(o.placementOptionId)}" ${i === 0 ? "checked" : ""}>
+          <b>${(o.shipmentIds || []).length} shipment${(o.shipmentIds || []).length === 1 ? "" : "s"}</b></div><b class="${fee(o) > 0 ? "warn" : "good"}">Placement fee ${fmt$(fee(o))}</b></div>
+          <div class="small muted" style="margin-top:6px">${(o.destinations || []).map((x) => `${esc(x.warehouse || "?")} ${esc(x.city || "")} ${esc(x.state || "")}${x.units ? ` — ${fmtN(x.units)} units` : ""}`).join(" · ")}${o.expiration ? ` · offer expires ${dt(Date.parse(o.expiration))}` : ""}</div></label>`).join("")}
+        <button class="primary" id="plc">Confirm warehouses →</button>` : `<button class="primary" id="plg">Get warehouse options →</button>`}</div>`;
+      if ($("#plg")) $("#plg").onclick = () => run("placement_generate");
+      if ($("#plc")) $("#plc").onclick = () => {
+        const o = opts.find((x) => x.placementOptionId === $("input[name=pl]:checked").value);
+        run("placement_confirm", { placementOptionId: o.placementOptionId }, "Confirm warehouses?",
+          `<p>Amazon will charge a placement fee of <b>${fmt$(fee(o))}</b> for this option, and it creates ${(o.shipmentIds || []).length} shipment(s). This can't be changed afterwards.</p>`, `Confirm — ${fmt$(fee(o))}`);
+      };
+    } else if (p.status === "transport") {
+      const sh = d.shipments || [];
+      const have = sh.some((s) => (s.transportOptions || []).length);
+      box.innerHTML = `<div class="card"><h2>Carrier</h2>
+        <div class="row" style="margin-bottom:10px"><label class="f">Ready to ship on<input type="date" id="rd" value="${d.readyDate || addDays(todayLA(), 1)}"></label><button id="tg" ${have ? "" : 'class="primary"'}>${have ? "Refresh carrier options" : "Get carrier options →"}</button></div>
+        ${sh.map((s) => `<div class="card" style="padding:12px"><b>${esc(s.warehouse || s.shipmentId)}</b> <span class="small muted">${esc(s.city || "")} ${esc(s.state || "")}${s.units ? ` · ${fmtN(s.units)} units` : ""}</span>
+          ${(s.transportOptions || []).map((o, i) => `<label class="chk" style="display:flex;margin:6px 0"><input type="radio" name="t-${esc(s.shipmentId)}" value="${esc(o.transportationOptionId)}" ${i === 0 ? "checked" : ""}>
+            <b>${o.solution === "AMAZON_PARTNERED_CARRIER" ? "Amazon partnered carrier" : "Your own carrier"}</b> · ${esc(o.carrier || "")} · ${o.mode === "GROUND_SMALL_PARCEL" ? "small parcel (boxes)" : esc((o.mode || "").toLowerCase().replace(/_/g, " "))} · <b>${o.cost !== null ? fmt$(o.cost) : "no quote"}</b></label>`).join("") || `<div class="small muted">No options yet.</div>`}</div>`).join("")}
+        ${have ? `<button class="primary" id="tc">Confirm carriers →</button>` : ""}</div>`;
+      $("#tg").onclick = () => run("transport_generate", { readyDate: $("#rd").value });
+      if ($("#tc")) $("#tc").onclick = () => {
+        const selections = {}; let total = 0;
+        for (const s of sh) {
+          const v = $(`input[name="t-${CSS.escape(s.shipmentId)}"]:checked`)?.value;
+          selections[s.shipmentId] = v;
+          total += (s.transportOptions || []).find((o) => o.transportationOptionId === v)?.cost || 0;
+        }
+        run("transport_confirm", { selections }, "Confirm carriers?", `<p>Shipping charges of <b>${fmt$(total)}</b> will apply (Amazon partnered carrier charges are billed to your seller account). After this the shipment is final and labels can be printed.</p>`, `Confirm — ${fmt$(total)}`);
+      };
+    } else if (p.status === "confirmed" || p.status === "cancelled") {
+      const sh = d.shipments || [];
+      box.innerHTML = `<div class="card"><div class="card-h"><h2>${p.status === "cancelled" ? "Cancelled" : "Ready to ship"}</h2>${p.inbound_plan_id ? `<button id="rf">Refresh from Amazon</button>` : ""}</div>
+        ${sh.map((s) => `<div class="card" style="padding:12px"><div class="row between"><div><b>${esc(s.confirmationId || s.shipmentId)}</b> → <b>${esc(s.warehouse || "")}</b> <span class="small muted">${esc(s.city || "")} ${esc(s.state || "")} · ${s.boxCount ? `${s.boxCount} boxes` : ""} ${s.status ? "· " + esc(s.status) : ""}</span></div>
+          ${p.status === "confirmed" ? `<div class="row"><span class="small muted">Box labels:</span>
+            <button class="sm" data-bl="${esc(s.shipmentId)}" data-pt="PackageLabel_Letter_2">Letter (2 per page)</button>
+            <button class="sm" data-bl="${esc(s.shipmentId)}" data-pt="PackageLabel_Letter_6">Letter (6 per page)</button>
+            <button class="sm" data-bl="${esc(s.shipmentId)}" data-pt="PackageLabel_Thermal">Thermal 4×6</button></div>` : ""}</div></div>`).join("") || `<p class="muted">No shipments.</p>`}
+        ${p.status === "confirmed" ? `<p class="small muted">Using your own carrier? Add the tracking numbers in Seller Central (link at the top). Amazon partnered carrier labels are included in the box labels.</p>` : ""}</div>`;
+      $$("[data-bl]").forEach((b) => b.onclick = () => window.open(`/api/ship/plans/${id}/box-labels?shipmentId=${encodeURIComponent(b.dataset.bl)}&pageType=${b.dataset.pt}`, "_blank"));
+      if ($("#rf")) $("#rf").onclick = () => run("refresh");
+    }
+  };
+  const drawBoxes = (box, d) => {
+    const groups = d.packingGroups || [];
+    const saved = d.boxes || {};
+    // default: one line per product = 1 box holding everything (user edits count / units per box)
+    const lines = {};
+    for (const g of groups) lines[g.packingGroupId] = (saved[g.packingGroupId] || g.items.map((it) => ({ count: 1, length: "", width: "", height: "", weight: "", items: [{ msku: it.msku, qty: it.quantity }] })))
+      .map((l) => ({ ...l, items: g.items.map((it) => ({ msku: it.msku, qty: (l.items.find((x) => x.msku === it.msku) || {}).qty || 0 })) }));
+    const drawG = () => {
+      box.innerHTML = `<div class="card"><h2>Boxes</h2><p class="small muted">For each box type enter how many identical boxes, the box size (inches), weight (lb) and how many units of each product go in one box. Mixed boxes: put units of several products on the same line. Totals must match the plan.</p>
+        ${groups.map((g, gi) => {
+          const L = lines[g.packingGroupId];
+          const tot = Object.fromEntries(g.items.map((it) => [it.msku, L.reduce((s, l) => s + (Number(l.count) || 0) * (Number(l.items.find((x) => x.msku === it.msku)?.qty) || 0), 0)]));
+          return `<div class="card" style="padding:12px"><h3>Packing group ${gi + 1} <span class="small muted">(${g.items.length} products)</span></h3>
+          <div class="box-line small muted"><span># boxes</span><span>Length</span><span>Width</span><span>Height</span><span>Weight lb</span><span>Units per box</span><span></span></div>
+          ${L.map((l, li) => `<div class="box-line">
+            <input type="number" min="1" data-g="${gi}" data-l="${li}" data-k="count" value="${l.count}">
+            ${["length", "width", "height", "weight"].map((k) => `<input type="number" step="0.1" min="0" data-g="${gi}" data-l="${li}" data-k="${k}" value="${l[k]}">`).join("")}
+            <div>${l.items.map((it, ii) => `<div class="row" style="gap:6px;margin-bottom:4px"><input class="w-num" style="width:70px" type="number" min="0" data-g="${gi}" data-l="${li}" data-i="${ii}" value="${it.qty || 0}"><span class="small mono">${esc(it.msku)}</span></div>`).join("")}</div>
+            <button class="sm danger" data-rl="${gi}:${li}" title="Remove line">×</button></div>`).join("")}
+          <div class="row" style="margin-top:8px"><button class="sm" data-al="${gi}">+ Add box type</button>
+            <span class="small">${g.items.map((it) => `<span class="badge ${tot[it.msku] === it.quantity ? "good" : "bad"}">${esc(it.msku)}: ${tot[it.msku]} / ${it.quantity}</span>`).join(" ")}</span></div></div>`;
+        }).join("")}
+        <div class="row"><button id="bsave">Save draft</button><button class="primary" id="bsub">Send box contents to Amazon →</button></div></div>`;
+      $$("[data-k]", box).forEach((i) => i.onchange = () => { lines[groups[i.dataset.g].packingGroupId][i.dataset.l][i.dataset.k] = i.value; drawG(); });
+      $$("[data-i]", box).forEach((i) => i.onchange = () => { lines[groups[i.dataset.g].packingGroupId][i.dataset.l].items[i.dataset.i].qty = Number(i.value); drawG(); });
+      $$("[data-rl]", box).forEach((b) => b.onclick = () => { const [g, l] = b.dataset.rl.split(":").map(Number); lines[groups[g].packingGroupId].splice(l, 1); drawG(); });
+      $$("[data-al]", box).forEach((b) => b.onclick = () => { const g = groups[b.dataset.al]; lines[g.packingGroupId].push({ count: 1, length: "", width: "", height: "", weight: "", items: g.items.map((it) => ({ msku: it.msku, qty: 0 })) }); drawG(); });
+      $("#bsave").onclick = async () => { await api("PUT", `/ship/plans/${id}`, { boxes: lines }); toast("Saved"); };
+      $("#bsub").onclick = () => run("boxes_submit", { groups: lines });
+    };
+    drawG();
+  };
+  await render();
+}
+
 // ---------------- images ----------------
 PAGES.images = async (el, params) => {
   el.innerHTML = header("Image updates", "Pick a product, swap images, push to Amazon") + `
-    <div class="card"><div class="filters"><label class="f" style="flex:1">Product<div id="pk"></div></label></div></div>
+    <div class="card"><div class="filters"><div class="f" style="flex:1">Product<div id="pk"></div></div></div></div>
     <div id="body"><div class="empty">Pick a product to see its current images.</div></div>
     <div class="card flush"><div class="card-h"><h2>Recent image pushes</h2></div><div id="jobs"></div></div>`;
   const SL = ["MAIN", "PT01", "PT02", "PT03", "PT04", "PT05", "PT06", "PT07", "PT08", "SWCH"];

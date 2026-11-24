@@ -258,6 +258,8 @@ export function inventoryRows(S: Store) {
     sales.set(r.sku, { l7: r.l7, l14: r.l14, l30: r.l30 });
   }
   const costs = costMap(S);
+  const today0 = S.salesToday();
+  const errs = new Map<string, number>(S.all(`SELECT sku, SUM(qty) n FROM inv_errors WHERE end_day >= ? AND (start_day IS NULL OR start_day <= ?) GROUP BY sku`, today0, today0).map((r) => [r.sku, r.n]));
   const rows = S.all(`SELECT p.sku, p.asin, p.fnsku, p.title, p.image, p.price, p.status, p.discontinued, p.direct_fba, p.errors, p.cogs,
         COALESCE(p.is_mrm, p.mrm_auto, 0) mrm, i.fulfillable, i.reserved, i.fc_transfer, i.inbound_working, i.inbound_shipped,
         i.inbound_receiving, i.unfulfillable, i.researching, i.updated_at inv_at, o.we_have_bb, o.bb_price, o.ts offers_at,
@@ -269,7 +271,7 @@ export function inventoryRows(S: Store) {
     const sellable = r.fulfillable || 0, reserved = r.reserved || 0;
     const total = sellable + reserved;
     const shipped = r.inbound_shipped || 0, receiving = r.inbound_receiving || 0, created = r.inbound_working || 0, unful = r.unfulfillable || 0;
-    const errors = r.errors || 0;
+    const errors = errs.get(r.sku) || 0;
     const weighted = (s.l7 * 4 + s.l14 * 2 + s.l30) / 3;
     const avg30 = r.discontinued ? 0 : Math.max(s.l30, weighted);
     const perDay = avg30 / 30;

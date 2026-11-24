@@ -47,6 +47,11 @@ CREATE TABLE IF NOT EXISTS report_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, ki
 CREATE TABLE IF NOT EXISTS jobs_state (name TEXT PRIMARY KEY, last_run INTEGER, last_ok INTEGER, info TEXT);
 CREATE TABLE IF NOT EXISTS image_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, sku TEXT, asin TEXT, slots TEXT, status TEXT, result TEXT,
   submission_id TEXT, user TEXT, created_at INTEGER, done_at INTEGER);
+CREATE TABLE IF NOT EXISTS inv_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, sku TEXT, qty INTEGER, note TEXT, start_day TEXT, end_day TEXT,
+  created_by TEXT, created_at INTEGER);
+CREATE TABLE IF NOT EXISTS ship_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, status TEXT, inbound_plan_id TEXT, address TEXT,
+  data TEXT, last_error TEXT, created_by TEXT, created_at INTEGER, updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS ship_items (plan_id INTEGER, sku TEXT, asin TEXT, fnsku TEXT, qty INTEGER, PRIMARY KEY (plan_id, sku));
 CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, area TEXT, msg TEXT);
 CREATE TABLE IF NOT EXISTS email_log (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, kind TEXT, subject TEXT, status TEXT, error TEXT);
 CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, user TEXT, action TEXT, detail TEXT);
@@ -66,5 +71,9 @@ export const MIGRATIONS: string[][] = [
     "DROP INDEX IF EXISTS sales_asin",
     "DROP TABLE IF EXISTS sessions",
     "INSERT OR REPLACE INTO sales_totals (day, units, revenue) SELECT day, SUM(units), ROUND(SUM(revenue), 2) FROM sales_daily GROUP BY day",
+  ],
+  [
+    // errors moved to their own list with an end date; carry over existing ones for 30 days
+    "INSERT INTO inv_errors (sku, qty, note, start_day, end_day, created_by, created_at) SELECT sku, errors, 'carried over', date('now'), date('now', '+30 days'), 'system', strftime('%s','now')*1000 FROM products WHERE errors > 0",
   ],
 ];

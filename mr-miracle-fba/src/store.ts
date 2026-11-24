@@ -8,6 +8,7 @@ import { DEFAULT_RULES, REASON_MANUAL, REASON_REPRICE, REASON_SELLERS, enqueueOf
 import { DEFAULT_FEE_EMAIL, buildFeeEmail, diffFees, feeChanges, maybeSendFeeEmail } from "./fees";
 import { DEFAULT_INV_SETTINGS, compareRanges, inventoryRows, priceAnalysis, productMeta, resolveSkus, salesGrid, salesReport } from "./analysis";
 import { currentImages, processImageJobs, queueImageJob, storeUpload } from "./images";
+import { ShipError, boxLabels, createDraft, defaultAddress, getPlan, setItems, step as shipStep, unitLabels } from "./shipping";
 import { SALES_TZ, addDays, esc, hashPassword, num, parseCsv, randomToken, round2, safeEqual, today } from "./util";
 
 
@@ -300,7 +301,7 @@ export class Store extends DurableObject {
       if (/rows written|exceeded allowed/i.test(String(e?.message))) {
         return Response.json({ error: "Cloudflare's free daily storage limit is used up, so changes can't be saved until midnight UTC. Viewing still works. (Upgrading to Workers Paid removes this limit.)" }, { status: 503 });
       }
-      const status = e instanceof HttpError ? e.status : 500;
+      const status = e instanceof HttpError ? e.status : e instanceof ShipError ? 400 : 500;
       if (status === 500) this.log("api", `${request.method} ${url.pathname}: ${e.stack || e.message}`);
       return Response.json({ error: e.message || String(e) }, { status });
     }
@@ -656,6 +657,88 @@ export class Store extends DurableObject {
       this.audit(who, "images.push", { sku: p.sku, slots: b.slots });
       await this.ensureAlarm(1000);
       return { ok: true };
+    }
+
+
+    // ----- inventory errors (units to subtract until an end date) -----
+    if (path === "/api/inv-errors" && method === "GET") {
+      return this.all(`SELECT e.*, p.title, p.asin, p.image FROM inv_errors e LEFT JOIN products p ON p.sku=e.sku ORDER BY (e.end_day >= ?) DESC, e.end_day DESC, e.id DESC LIMIT 500`, d);
+    }
+    if (path === "/api/inv-errors" && method === "POST") {
+      const b = await body();
+      if (!this.one(`SELECT 1 x FROM products WHERE sku=?`, b.sku)) throw new HttpError(400, "Pick a product.");
+      if (!(Number(b.qty) > 0)) throw new HttpError(400, "Enter the number of units.");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(b.endDay || "")) throw new HttpError(400, "Pick an end date.");
+      this.run(`INSERT INTO inv_errors (sku, qty, note, start_day, end_day, created_by, created_at) VALUES (?,?,?,?,?,?,?)`,
+        b.sku, Math.round(Number(b.qty)), String(b.note || "").slice(0, 300), b.startDay || d, b.endDay, who, Date.now());
+      this.audit(who, "inv-errors.add", b);
+      return { ok: true };
+    }
+    const errDel = path.match(/^\/api\/inv-errors\/(\d+)$/);
+    if (errDel && method === "DELETE") { this.run(`DELETE FROM inv_errors WHERE id=?`, Number(errDel[1])); return { ok: true }; }
+    if (errDel && method === "PATCH") {
+      const b = await body();
+      if (b.endDay) this.run(`UPDATE inv_errors SET end_day=? WHERE id=?`, b.endDay, Number(errDel[1]));
+      if (b.qty !== undefined) this.run(`UPDATE inv_errors SET qty=? WHERE id=?`, Math.round(Number(b.qty)), Number(errDel[1]));
+      return { ok: true };
+    }
+
+    // ----- shipping (FBA inbound) -----
+    if (path === "/api/ship/plans" && method === "GET") {
+      return this.all(`SELECT s.id, s.name, s.status, s.inbound_plan_id, s.created_by, s.created_at, s.updated_at, s.last_error,
+          (SELECT COUNT(*) FROM ship_items WHERE plan_id=s.id) skus, (SELECT SUM(qty) FROM ship_items WHERE plan_id=s.id) units
+        FROM ship_plans s ORDER BY s.id DESC LIMIT 200`);
+    }
+    if (path === "/api/ship/plans" && method === "POST") {
+      const b = await body();
+      const id = createDraft(this, b.name, b.items || [], who);
+      this.audit(who, "ship.create-draft", { id, items: (b.items || []).length });
+      return { ok: true, id };
+    }
+    if (path === "/api/ship/address") return (await defaultAddress(this)) || {};
+    if (path === "/api/labels/units") {
+      return unitLabels(this, [{ sku: q.get("sku") || "", qty: Number(q.get("qty") || 1) }], q.get("type") || "letter");
+    }
+    const sm = path.match(/^\/api\/ship\/plans\/(\d+)(?:\/([a-z-]+))?$/);
+    if (sm) {
+      const id = Number(sm[1]), sub = sm[2];
+      if (!sub && method === "GET") return getPlan(this, id);
+      if (!sub && method === "PUT") {
+        const b = await body();
+        if (b.name) this.run(`UPDATE ship_plans SET name=?, updated_at=? WHERE id=?`, String(b.name).slice(0, 80), Date.now(), id);
+        if (b.address) this.run(`UPDATE ship_plans SET address=? WHERE id=?`, JSON.stringify(b.address), id);
+        if (b.boxes) { const p = getPlan(this, id); p.data.boxes = b.boxes; this.run(`UPDATE ship_plans SET data=? WHERE id=?`, JSON.stringify(p.data), id); }
+        return { ok: true };
+      }
+      if (!sub && method === "DELETE") {
+        const p = getPlan(this, id);
+        if (p.inbound_plan_id && !["cancelled", "draft"].includes(p.status)) throw new HttpError(400, "Cancel the plan in Amazon first.");
+        this.run(`DELETE FROM ship_items WHERE plan_id=?`, id);
+        this.run(`DELETE FROM ship_plans WHERE id=?`, id);
+        return { ok: true };
+      }
+      if (sub === "items" && method === "PUT") { const b = await body(); setItems(this, id, b.items || []); return getPlan(this, id); }
+      if (sub === "step" && method === "POST") {
+        const b = await body();
+        this.audit(who, "ship.step", { id, action: b.action });
+        try {
+          const out = await shipStep(this, id, b.action, b);
+          this.run(`UPDATE ship_plans SET last_error=NULL WHERE id=?`, id);
+          return out;
+        } catch (e: any) {
+          this.run(`UPDATE ship_plans SET last_error=?, updated_at=? WHERE id=?`, String(e.message).slice(0, 2000), Date.now(), id);
+          // a failed create leaves nothing usable in Amazon: go back to draft so it can be fixed and retried
+          if (b.action === "create") this.run(`UPDATE ship_plans SET status='draft', inbound_plan_id=NULL WHERE id=? AND status IN ('creating','draft')`, id);
+          throw e;
+        }
+      }
+      if (sub === "unit-labels") {
+        const p = getPlan(this, id);
+        const only = q.get("sku");
+        const list = p.items.filter((i: any) => !only || i.sku === only).map((i: any) => ({ sku: i.sku, qty: Number(q.get("qty")) || i.qty }));
+        return unitLabels(this, list, q.get("type") || "letter");
+      }
+      if (sub === "box-labels") return boxLabels(this, getPlan(this, id), q.get("shipmentId") || "", q.get("pageType") || "PackageLabel_Letter_2");
     }
 
     // ----- system / settings -----
