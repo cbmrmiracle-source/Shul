@@ -1316,10 +1316,12 @@ async function shipPlanPage(el, id) {
       `<a class="btn" href="#/shipping">← All shipments</a><button id="pick">Pick list</button><button id="ul">FNSKU labels (Letter)</button>
        ${canSpend() && p.status !== "cancelled" && p.inbound_plan_id ? `<button class="danger" id="cancel">Cancel in Amazon</button>` : ""}
        ${canSpend() && (p.status === "draft" || p.status === "cancelled") ? `<button class="danger" id="del">Delete</button>` : ""}`) + `
+      <div id="sumbar"></div>
       <div class="steps">${SHIP_STEPS.map(([k, l], i) => `<span class="st ${p.status === "cancelled" ? "" : i < curIdx || p.status === "confirmed" ? "done" : i === curIdx ? "cur" : ""}">${l}</span>`).join("")}</div>
       ${p.last_error ? `<div class="banner bad"><div class="txt" style="white-space:pre-wrap"><b>Amazon reported a problem:</b>\n${esc(p.last_error)}</div></div>` : ""}
       <div id="stepbox"></div>
       <div class="card flush"><div class="card-h"><h2>Products</h2>${p.status === "draft" && canShip() ? `<button id="paste">Paste more lines</button>` : ""}</div><div id="items"></div></div>`;
+    drawSummary();
     const editable = p.status === "draft" && canShip();
     table($("#items"), [
       { k: "sku", l: "Product", f: (i) => prodCell({ ...i, asin: i.asin || i.cur_asin }), cls: "prod" },
@@ -1363,6 +1365,77 @@ async function shipPlanPage(el, id) {
     else if (p.status === "boxes") drawBoxes(box, d);
     else if (p.status === "freight") drawFreight(box, d);
     else drawDone(box, d);
+  };
+
+  // ---- summary bar (collapsible, like 9Yard) ----
+  const drawSummary = () => {
+    const d = p.data || {};
+    let open = (() => { try { return localStorage.getItem("mm-shipsum") !== "0"; } catch { return true; } })();
+    const info = Object.fromEntries(p.items.map((i) => [i.sku, i]));
+    const lbs = (i) => i.unit_weight == null ? null : /ounce|oz/i.test(i.weight_unit || "") ? i.unit_weight / 16 : /kilo|kg/i.test(i.weight_unit || "") ? i.unit_weight * 2.20462 : i.unit_weight;
+    const cuin = (i) => i.u_long && i.u_med && i.u_short ? i.u_long * i.u_med * i.u_short * (/cent|cm/i.test(i.dim_unit || "") ? 0.0610237 : 1) : null;
+    const prepBy = (() => { const o = Object.values(d.itemOwners || {}).map((x) => x.prepOwner); if (!o.length) return "—"; const u = [...new Set(o)]; return u.length > 1 ? "Mixed" : ({ SELLER: "Seller", NONE: "None", AMAZON: "Amazon" }[u[0]] || u[0]); })();
+    const shipments = (d.shipments || []).length ? d.shipments : [null];
+    const addr = (a) => a ? [esc(a.name || ""), esc([a.addressLine1, a.addressLine2].filter(Boolean).join(" ")), esc([a.city, a.stateOrProvinceCode, a.postalCode].filter(Boolean).join(", ")), esc(a.countryCode || "")].filter(Boolean).join("<br>") : "—";
+    const kv = (k, v, edit) => `<div class="sm-k">${k}${edit ? ` <a href="javascript:void 0" class="sm-edit" data-edit="${edit}">EDIT</a>` : ""}</div><div class="sm-v">${v}</div>`;
+    const block = (sh) => {
+      const items = sh ? (sh.items || []).map((x) => ({ ...info[x.msku], sku: x.msku, qty: x.quantity })) : p.items.map((i) => ({ ...i }));
+      const units = items.reduce((a, x) => a + (x.qty || 0), 0);
+      const known = (f) => items.every((x) => f(x) != null);
+      const skuW = items.reduce((a, x) => a + (lbs(x) || 0) * x.qty, 0);
+      const cuft = items.reduce((a, x) => a + (cuin(x) || 0) * x.qty, 0) / 1728;
+      const value = items.reduce((a, x) => a + (x.price || 0) * x.qty, 0);
+      const boxes = sh ? (d.boxList?.[sh.shipmentId] || []) : [];
+      const boxW = boxes.reduce((a, b) => a + (Number(b.weight) || 0), 0);
+      const chosen = sh ? (sh.transportOptions || []).find((o) => o.transportationOptionId === sh.selected) : null;
+      const shipPrice = d.shippingPrice ?? chosen?.cost ?? null;
+      const fee = d.placementFee ?? null;
+      return `<div class="sumgrid">
+        <div>${kv("Shipment name", esc(sh?.name || p.name), "name")}${kv("Shipment ID", esc(sh?.confirmationId || "—"))}${kv("Amazon reference ID", esc(sh?.amazonReferenceId || "—"))}${kv("Shipping price", fmt$(shipPrice ?? 0), "price")}</div>
+        <div>${kv("Ship from", addr(p.address))}${kv("Deduct from", `<span class="faint" title="Comes with the stock system">— (coming with stock system)</span>`)}</div>
+        <div>${kv("Ship to", sh ? `<b>${esc(sh.warehouse || "")}</b><br>${addr(sh.destAddress)}` : `<span class="faint">Not assigned yet — Amazon picks the warehouse in step 2</span>`)}</div>
+        <div class="sm-tbl">
+          <div class="sm-k" style="grid-column:1/-1">Shipment content</div>
+          <span>SKUs</span><b>${fmtN(items.length)}</b><span>Units</span><b>${fmtN(units)}</b>
+          <span>Boxes</span><b>${fmtN(boxes.length)}</b>
+          <span>SKU weight (lbs)</span><b>${known(lbs) ? fmtN(skuW, 2) : skuW ? fmtN(skuW, 2) + "*" : "—"}</b>
+          <span>Box weight (lbs)</span><b>${fmtN(boxW, 2)}</b>
+          <span>Received qty</span><b>${sh?.receivedTotal != null ? fmtN(sh.receivedTotal) : "0"}</b>
+          <span>Cu ft / CBM</span><b>${cuft ? `${fmtN(cuft, 2)} / ${fmtN(cuft * 0.0283168, 2)}` : "—"}</b>
+          <span>Total value</span><b>${fmt$(value)}</b>
+          <span>Placement fee</span><b>${fee != null ? fmt$(fee) : "—"}</b>
+        </div>
+        <div class="sm-tbl">
+          <span>Storage type</span><b>Standard</b>
+          <span>Created on</span><b>${p.created_at ? new Date(p.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "—"}</b>
+          <span>Created by</span><b>${esc(p.created_by || "—")}</b>
+          <span>Prep by</span><b>${prepBy}</b>
+          <span>Box content source</span><b>${boxes.some((b) => b.printed) ? "2D barcode" : "Interactive"}</b>
+          <span>Note</span><b>${d.note ? esc(d.note) : ""} <a href="javascript:void 0" class="sm-edit" data-edit="note">EDIT</a></b>
+          <span>Attachments</span><b class="faint">No files yet (coming soon)</b>
+          <span>Ignore until</span><b><input type="date" disabled title="Coming soon" style="padding:2px 4px"></b>
+        </div></div>`;
+    };
+    $("#sumbar").innerHTML = `<div class="sumbar card ${open ? "" : "closed"}">
+      <div class="row between"><b class="small muted" style="letter-spacing:.04em;text-transform:uppercase">Shipment summary${shipments.length > 1 ? ` · ${shipments.length} shipments` : ""}</b>
+        <button class="sm" id="sumtog">${open ? "Hide summary ▲" : "Show summary ▼"}</button></div>
+      ${open ? shipments.map((sh, i) => `${i ? '<hr class="sep">' : ""}${block(sh)}`).join("") : ""}</div>`;
+    $("#sumtog").onclick = () => { try { localStorage.setItem("mm-shipsum", open ? "0" : "1"); } catch {} drawSummary(); };
+    $$("#sumbar [data-edit]").forEach((a) => a.onclick = async () => {
+      if (!canShip()) return toast("View only.", true);
+      const k = a.dataset.edit;
+      const cur = k === "name" ? p.name : k === "note" ? (d.note || "") : (d.shippingPrice ?? "");
+      const m = modal(`<h2>${k === "name" ? "Shipment name" : k === "note" ? "Note" : "Shipping price ($)"}</h2>
+        ${k === "note" ? `<textarea id="sv" rows="5">${esc(cur)}</textarea>` : `<input id="sv" style="width:100%" ${k === "price" ? 'type="number" step="0.01"' : ""} value="${esc(cur)}">`}
+        <div class="foot"><button data-close>Cancel</button><button class="primary" id="sok">Save</button></div>`);
+      $("#sok", m.el).onclick = async () => {
+        const v = $("#sv", m.el).value;
+        try {
+          await api("PUT", `/ship/plans/${id}`, k === "name" ? { name: v } : k === "note" ? { note: v } : { shippingPrice: v });
+          p = await GET(`/ship/plans/${id}`); m.close(); render();
+        } catch (e) { toast(e.message, true); }
+      };
+    });
   };
 
   // ---- 1. plan ----
@@ -1479,6 +1552,7 @@ async function shipPlanPage(el, id) {
       try { p = await api("POST", `/ship/plans/${id}/step`, { action: "refresh" }); d = p.data; shipments = d.shipments || []; } catch (e) { toast(e.message, true); }
     }
     const boxList = d.boxList || {};
+    d.boxList = boxList; // shared with the summary bar
     for (const s of shipments) boxList[s.shipmentId] = boxList[s.shipmentId] || [];
     let cur = 0;                      // shipment tab
     const sel = new Set();            // selected box indexes (current shipment)
@@ -1490,7 +1564,7 @@ async function shipPlanPage(el, id) {
     const fnskuOf = (s, msku) => (s.items || []).find((x) => x.msku === msku)?.fnsku || itemInfo[msku]?.fnsku || itemInfo[msku]?.cur_fnsku || "";
     const boxedOf = (s, msku) => boxList[s.shipmentId].reduce((a, b) => a + (b.items.find((x) => x.msku === msku)?.qty || 0), 0);
     const save = debounce(async () => { try { await api("PUT", `/ship/plans/${id}`, { boxList }); } catch (e) { toast("Not saved: " + e.message, true); } }, 600);
-    const changed = () => { save(); draw(); };
+    const changed = () => { save(); draw(); drawSummary(); };
     const lastDims = () => { const L = boxList[shipments[cur].shipmentId]; const b = [...L].reverse().find((x) => x.length); return b ? { length: b.length, width: b.width, height: b.height, weight: b.weight } : {}; };
 
     const draw = () => {
@@ -1703,7 +1777,7 @@ async function shipPlanPage(el, id) {
         .c{text-align:center}.tiny{font:9px 'Courier New',monospace}.bar{background:#000;color:#fff;font-weight:bold;padding:2px 6px;display:flex;justify-content:space-between;font-size:13px}
         .two{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:10.5px;margin:4px 0;border-top:2px solid #000;padding-top:3px}.two b.big{font-size:20px}
         .hd{display:flex;justify-content:space-between;align-items:center;border-top:2px solid #000;margin-top:2px}.hd .fba{font:bold 18px 'Courier New',monospace}
-        .ct{font:10px 'Courier New',monospace;border-top:2px solid #000;padding-top:3px;margin-top:auto}svg{display:block;margin:0 auto}
+        .ct{font:bold 10px 'Courier New',monospace;border-top:2px solid #000;padding-top:3px;margin-top:auto;text-align:right}svg{display:block;margin:0 auto}
         ${six ? ".two{font-size:9px;margin:2px 0}.two b.big{font-size:15px}.bar{font-size:11px;padding:1px 5px}.hd .fba{font-size:14px}.ct{font-size:8.5px}" : ""}
         @media screen{body{background:#eee}.sheet,.lab{background:#fff;margin:12px auto;outline:1px dashed #bbb}.sheet .lab{margin:0;outline:1px dotted #ccc}}</style>
         </head><body>
@@ -1711,11 +1785,11 @@ async function shipPlanPage(el, id) {
           const one = (l) => `<div class="lab">
           <div class="c">${svg({ bcid: "pdf417", text: l.twoD, columns: 6, scale: 2, padding: 2 }, `width:${bcW}in;height:${pdfH}in`)}</div><div class="tiny c">${esc(l.twoD.length > 70 ? l.twoD.slice(0, 70) + "…" : l.twoD)}</div>
           <div class="c" style="font-size:9px;font-weight:bold;letter-spacing:.5px">PLEASE LEAVE THIS LABEL UNCOVERED</div>
-          <div class="hd"><span class="fba">FBA</span><span class="bar" style="flex:1;margin-left:8px"><span>BOX ${l.n} OF ${l.of}</span><span>${esc(s.warehouse || "")}</span></span></div>
+          <div class="hd"><span class="fba">FBA</span><span class="bar" style="flex:1;margin-left:10px;min-height:1.15em"></span></div>
           <div class="two"><div>SHIP FROM:<br><b>${esc(from.name || "")}</b><br>${esc(from.addressLine1 || "")}${from.addressLine2 ? " " + esc(from.addressLine2) : ""}<br>${esc(from.city || "")} ${esc(from.stateOrProvinceCode || "")} ${esc(from.postalCode || "")} ${esc(from.countryCode || "")}</div>
             <div>SHIP TO:<br><b class="big">${esc(s.warehouse || to.name || "")}</b><br>${esc(to.addressLine1 || "")}${to.addressLine2 ? " " + esc(to.addressLine2) : ""}<br>${esc(to.city || "")} ${esc(to.stateOrProvinceCode || "")} ${esc(to.postalCode || "")}</div></div>
           <div class="bar"><span>${esc(s.name || p.name)}</span></div>
-          <div class="c" style="font-size:9px;font-weight:bold;margin-top:4px">Purchase Order / Shipment ID</div>
+          <div class="c" style="font:bold 10px 'Courier New',monospace;margin-top:4px">Purchase Order / Shipment ID</div>
           <div class="c">${svg({ bcid: "code128", text: l.boxId, height: 14, scale: 2 }, `width:${bcW}in;height:${c128H}in`)}</div><div class="c" style="font:bold ${six ? 11 : 13}px Arial">${esc(l.boxId)}</div>
           <div class="ct">${esc(l.contents)}${l.mixed.length ? `<br>${l.mixed.map(esc).join(" · ")}` : ""}</div></div>`;
           if (!six) return labels.map(one).join("");

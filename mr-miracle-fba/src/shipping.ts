@@ -78,9 +78,12 @@ export function getPlan(S: Store, id: number) {
   const p = S.one(`SELECT * FROM ship_plans WHERE id=?`, id);
   if (!p) throw new ShipError("Shipment plan not found.");
   const items = S.all(`SELECT i.*, p.title, p.image, p.fnsku AS cur_fnsku, p.asin AS cur_asin, inv.fulfillable,
-                         b.units_per_box, b.length, b.width, b.height, b.weight
+                         b.units_per_box, b.length, b.width, b.height, b.weight, p.price, p.cogs,
+                         f.weight AS unit_weight, f.weight_unit, f.longest AS u_long, f.median AS u_med, f.shortest AS u_short, f.dim_unit
                        FROM ship_items i LEFT JOIN products p ON p.sku=i.sku LEFT JOIN inventory inv ON inv.sku=i.sku
-                       LEFT JOIN box_specs b ON b.sku=i.sku WHERE i.plan_id=? ORDER BY i.sku`, id);
+                       LEFT JOIN box_specs b ON b.sku=i.sku
+                       LEFT JOIN fee_snapshots f ON f.sku=i.sku AND f.day=(SELECT MAX(day) FROM fee_snapshots WHERE sku=i.sku)
+                       WHERE i.plan_id=? ORDER BY i.sku`, id);
   const data = JSON.parse(p.data || "{}");
   data.target = normTarget(data.target || {});
   return { ...p, data, address: JSON.parse(p.address || "null"), items };
@@ -566,6 +569,14 @@ export async function step(S: Store, id: number, action: string, args: any) {
             destAddress: sh.destination?.address || s.destAddress || null, name: sh.name || s.name || null });
           const boxes = await listAll(S, `${BASE}/inboundPlans/${pid}/shipments/${s.shipmentId}/boxes`, "boxes");
           s.boxCount = boxes.length;
+          if (s.confirmationId) { // received quantities (older v0 API still reports these)
+            try {
+              const r = await call(S, "GET", `/fba/inbound/v0/shipments/${s.confirmationId}/items`, { MarketplaceId: S.amz.marketplaceId });
+              const items = r.payload?.ItemData || [];
+              s.received = Object.fromEntries(items.map((x: any) => [x.SellerSKU, x.QuantityReceived || 0]));
+              s.receivedTotal = items.reduce((a: number, x: any) => a + (x.QuantityReceived || 0), 0);
+            } catch { /* not available yet */ }
+          }
         } catch { /* keep old */ }
       }
       saveData(S, id, data);
