@@ -225,3 +225,11 @@ table.t tr.st-discontinued td { opacity: .6; }
 .box-line input { width: 100%; }
 @media (max-width: 760px) { .box-line { grid-template-columns: repeat(3, 1fr); } }
 @media print { .side, .topbar .actions, .no-print, .toast-wrap { display: none !important; } .app { display: block; } .main { padding: 0; } .card { box-shadow: none; border: 0; } }
+.boxing { display: grid; grid-template-columns: minmax(320px, 2fr) minmax(380px, 3fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .boxing { grid-template-columns: 1fr; } }
+.bx-items, .bx-boxes { max-height: 68vh; overflow: auto; padding: 8px 10px 12px; }
+.bx-item { padding: 10px 6px; border-bottom: 1px solid var(--line-2); }
+.bx-box { display: flex; gap: 10px; align-items: center; padding: 10px 8px; border-bottom: 1px solid var(--line-2); border-radius: 6px; }
+.bx-box.sel { background: var(--info-bg); }
+.bx-box input.w-num { width: 56px; padding: 4px 6px; }
+select.sm { padding: 4px 6px; font-size: 12px; }

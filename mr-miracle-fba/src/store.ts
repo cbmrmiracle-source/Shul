@@ -732,6 +732,7 @@ export class Store extends DurableObject {
         if (b.name) this.run(`UPDATE ship_plans SET name=?, updated_at=? WHERE id=?`, String(b.name).slice(0, 80), Date.now(), id);
         if (b.address) this.run(`UPDATE ship_plans SET address=? WHERE id=?`, JSON.stringify(b.address), id);
         if (b.boxes) { const p = getPlan(this, id); p.data.boxes = b.boxes; this.run(`UPDATE ship_plans SET data=? WHERE id=?`, JSON.stringify(p.data), id); }
+        if (b.boxList) { const p = getPlan(this, id); p.data.boxList = b.boxList; this.run(`UPDATE ship_plans SET data=?, updated_at=? WHERE id=?`, JSON.stringify(p.data), Date.now(), id); }
         return { ok: true };
       }
       if (!sub && method === "DELETE") {

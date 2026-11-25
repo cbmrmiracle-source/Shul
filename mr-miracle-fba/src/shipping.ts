@@ -438,7 +438,7 @@ export async function step(S: Store, id: number, action: string, args: any) {
       data.shipments = [];
       for (const d of opt.destinations || []) {
         const items = await listAll(S, `${BASE}/inboundPlans/${pid}/shipments/${d.shipmentId}/items`, "items");
-        data.shipments.push({ ...d, items: items.map((x: any) => ({ msku: x.msku, quantity: x.quantity })) });
+        data.shipments.push({ ...d, items: items.map((x: any) => ({ msku: x.msku, fnsku: x.fnsku || null, asin: x.asin || null, quantity: x.quantity })) });
       }
       saveData(S, id, data, "boxes");
       return step(S, id, "refresh", {});
@@ -562,7 +562,8 @@ export async function step(S: Store, id: number, action: string, args: any) {
         try {
           const sh = await call(S, "GET", `${BASE}/inboundPlans/${pid}/shipments/${s.shipmentId}`);
           Object.assign(s, { confirmationId: sh.shipmentConfirmationId || null, status: sh.status || null, warehouse: sh.destination?.warehouseId || s.warehouse,
-            city: sh.destination?.address?.city || s.city, state: sh.destination?.address?.stateOrProvinceCode || s.state, amazonReferenceId: sh.amazonReferenceId || null });
+            city: sh.destination?.address?.city || s.city, state: sh.destination?.address?.stateOrProvinceCode || s.state, amazonReferenceId: sh.amazonReferenceId || null,
+            destAddress: sh.destination?.address || s.destAddress || null, name: sh.name || s.name || null });
           const boxes = await listAll(S, `${BASE}/inboundPlans/${pid}/shipments/${s.shipmentId}/boxes`, "boxes");
           s.boxCount = boxes.length;
         } catch { /* keep old */ }

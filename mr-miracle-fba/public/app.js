@@ -1235,6 +1235,19 @@ const canSpend = () => state.me && ["admin", "manager"].includes(state.me.role);
 const canShip = () => state.me && ["admin", "manager", "warehouse"].includes(state.me.role);
 const optFee = (o) => (o.fees || []).reduce((s, f) => s + (f.value?.amount || 0), 0) - (o.discounts || []).reduce((s, f) => s + (f.value?.amount || 0), 0);
 
+let barcodeLib = null;
+function loadBarcodes() {
+  if (window.bwipjs) return Promise.resolve(window.bwipjs);
+  if (!barcodeLib) barcodeLib = new Promise((res, rej) => {
+    const sc = document.createElement("script");
+    sc.src = "/bwip-js-min.js";
+    sc.onload = () => (window.bwipjs ? res(window.bwipjs) : rej(new Error("barcode library missing")));
+    sc.onerror = () => { barcodeLib = null; rej(new Error("barcode library failed to load")); };
+    document.head.appendChild(sc);
+  });
+  return barcodeLib;
+}
+
 async function shipStep(id, action, args = {}) {
   const m = modal(`<div class="row" style="gap:12px"><span class="spinner"></span><div><b>Working with Amazon…</b><div class="small muted">This can take a minute or two. Please keep this page open.</div></div></div>`);
   try { return await api("POST", `/ship/plans/${id}/step`, { action, ...args }); }
@@ -1456,51 +1469,197 @@ async function shipPlanPage(el, id) {
     });
   };
 
-  // ---- 3. boxes ----
-  const specs = Object.fromEntries(p.items.map((i) => [i.sku, i]));
-  const drawBoxes = (box, d) => {
-    const shipments = d.shipments || [];
-    const lines = {};
-    for (const s of shipments) {
-      lines[s.shipmentId] = (d.boxes || {})[s.shipmentId] || (s.items || []).flatMap((it) => {
-        const sp = specs[it.msku] || {};
-        const base = { length: sp.length || "", width: sp.width || "", height: sp.height || "", weight: sp.weight || "" };
-        if (sp.units_per_box && it.quantity >= sp.units_per_box) {
-          const full = Math.floor(it.quantity / sp.units_per_box), rest = it.quantity - full * sp.units_per_box;
-          const out = [{ ...base, count: full, items: [{ msku: it.msku, qty: sp.units_per_box }] }];
-          if (rest) out.push({ ...base, count: 1, items: [{ msku: it.msku, qty: rest }] });
-          return out;
-        }
-        return [{ ...base, count: 1, items: [{ msku: it.msku, qty: it.quantity }] }];
-      });
-      // make sure each line lists every product of the shipment (for mixed boxes)
-      lines[s.shipmentId] = lines[s.shipmentId].map((l) => ({ ...l, items: (s.items || []).map((it) => ({ msku: it.msku, qty: (l.items.find((x) => x.msku === it.msku) || {}).qty || 0 })) }));
+  // ---- 3. boxes: products on the left, numbered boxes on the right, 2D labels printed here ----
+  const itemInfo = Object.fromEntries(p.items.map((i) => [i.sku, i]));
+  const drawBoxes = async (box, d) => {
+    let shipments = d.shipments || [];
+    // shipments confirmed before this version lack the label data: fetch it once
+    if (shipments.some((s) => !s.confirmationId || !s.destAddress)) {
+      box.innerHTML = `<div class="card loading"><span class="spinner"></span> Getting shipment details from Amazon…</div>`;
+      try { p = await api("POST", `/ship/plans/${id}/step`, { action: "refresh" }); d = p.data; shipments = d.shipments || []; } catch (e) { toast(e.message, true); }
     }
-    const drawG = () => {
-      box.innerHTML = `<div class="card"><h2>Boxes</h2><p class="small muted">One line per box type: number of identical boxes, size (in), weight (lb) and units of each product in one box. Sizes from last time are filled in. Mixed boxes: put several products on the same line.</p>
-        ${shipments.map((s, si) => {
-          const L = lines[s.shipmentId];
-          const tot = Object.fromEntries((s.items || []).map((it) => [it.msku, L.reduce((acc, l) => acc + (Number(l.count) || 0) * (Number(l.items.find((x) => x.msku === it.msku)?.qty) || 0), 0)]));
-          const boxesN = L.reduce((acc, l) => acc + (Number(l.count) || 0), 0);
-          return `<div class="card" style="padding:12px"><h3>→ ${esc(s.warehouse || s.shipmentId)} <span class="small muted">${esc(s.city || "")} ${esc(s.state || "")} · ${fmtN(boxesN)} boxes</span></h3>
-          <div class="box-line small muted"><span># boxes</span><span>Length</span><span>Width</span><span>Height</span><span>Weight lb</span><span>Units per box</span><span></span></div>
-          ${L.map((l, li) => `<div class="box-line">
-            <input type="number" min="1" data-s="${si}" data-l="${li}" data-k="count" value="${l.count}">
-            ${["length", "width", "height", "weight"].map((k) => `<input type="number" step="0.1" min="0" data-s="${si}" data-l="${li}" data-k="${k}" value="${l[k]}">`).join("")}
-            <div>${l.items.map((it, ii) => `<div class="row" style="gap:6px;margin-bottom:4px"><input class="w-num" style="width:70px" type="number" min="0" data-s="${si}" data-l="${li}" data-i="${ii}" value="${it.qty || 0}"><span class="small mono ${it.qty ? "" : "faint"}">${esc(it.msku)}</span></div>`).join("")}</div>
-            <button class="sm danger" data-rl="${si}:${li}" title="Remove line">×</button></div>`).join("")}
-          <div class="row" style="margin-top:8px"><button class="sm" data-al="${si}">+ Add box type</button>
-            <span class="small">${(s.items || []).map((it) => `<span class="badge ${tot[it.msku] === it.quantity ? "good" : "bad"}">${esc(it.msku)}: ${tot[it.msku]} / ${it.quantity}</span>`).join(" ")}</span></div></div>`;
-        }).join("")}
-        <div class="row"><button id="bsave">Save draft</button><button class="primary" id="bsub">Submit boxes to Amazon →</button></div></div>`;
-      $$("[data-k]", box).forEach((i) => i.onchange = () => { lines[shipments[i.dataset.s].shipmentId][i.dataset.l][i.dataset.k] = i.value; drawG(); });
-      $$("[data-i]", box).forEach((i) => i.onchange = () => { lines[shipments[i.dataset.s].shipmentId][i.dataset.l].items[i.dataset.i].qty = Number(i.value); drawG(); });
-      $$("[data-rl]", box).forEach((b) => b.onclick = () => { const [si, li] = b.dataset.rl.split(":").map(Number); lines[shipments[si].shipmentId].splice(li, 1); drawG(); });
-      $$("[data-al]", box).forEach((b) => b.onclick = () => { const s = shipments[b.dataset.al]; lines[s.shipmentId].push({ count: 1, length: "", width: "", height: "", weight: "", items: (s.items || []).map((it) => ({ msku: it.msku, qty: 0 })) }); drawG(); });
-      $("#bsave").onclick = async () => { await api("PUT", `/ship/plans/${id}`, { boxes: lines }); toast("Saved"); };
-      $("#bsub").onclick = () => run("boxes_submit", { boxes: lines });
+    const boxList = d.boxList || {};
+    for (const s of shipments) boxList[s.shipmentId] = boxList[s.shipmentId] || [];
+    let cur = 0;                      // shipment tab
+    const sel = new Set();            // selected box indexes (current shipment)
+    let fmt = (() => { try { return localStorage.getItem("mm-labelfmt") || "letter2"; } catch { return "letter2"; } })();
+    const fnskuOf = (s, msku) => (s.items || []).find((x) => x.msku === msku)?.fnsku || itemInfo[msku]?.fnsku || itemInfo[msku]?.cur_fnsku || "";
+    const boxedOf = (s, msku) => boxList[s.shipmentId].reduce((a, b) => a + (b.items.find((x) => x.msku === msku)?.qty || 0), 0);
+    const save = debounce(async () => { try { await api("PUT", `/ship/plans/${id}`, { boxList }); } catch (e) { toast("Not saved: " + e.message, true); } }, 600);
+    const changed = () => { save(); draw(); };
+    const lastDims = () => { const L = boxList[shipments[cur].shipmentId]; const b = [...L].reverse().find((x) => x.length); return b ? { length: b.length, width: b.width, height: b.height, weight: b.weight } : {}; };
+
+    const draw = () => {
+      const s = shipments[cur];
+      if (!s) { box.innerHTML = `<div class="card">No shipments.</div>`; return; }
+      const L = boxList[s.shipmentId];
+      const total = (s.items || []).reduce((a, x) => a + x.quantity, 0), boxedAll = (s.items || []).reduce((a, x) => a + boxedOf(s, x.msku), 0);
+      const allBoxed = shipments.every((sh) => (sh.items || []).every((x) => boxedOf(sh, x.msku) === x.quantity));
+      const missingDims = shipments.some((sh) => boxList[sh.shipmentId].some((b) => !(b.length > 0 && b.width > 0 && b.height > 0 && b.weight > 0)));
+      box.innerHTML = `
+        ${shipments.length > 1 ? `<div class="tabs">${shipments.map((sh, i) => `<button data-tab="${i}" class="${i === cur ? "on" : ""}">${esc(sh.warehouse || sh.shipmentId)} · ${esc(sh.confirmationId || "")}</button>`).join("")}</div>` : ""}
+        <div class="card" style="padding:12px 16px"><div class="row between">
+          <div><b>${esc(s.confirmationId || s.shipmentId)}</b> → <b>${esc(s.warehouse || "")}</b> <span class="small muted">${esc(s.city || "")} ${esc(s.state || "")}</span></div>
+          <div class="row" style="flex:1;max-width:480px;gap:10px"><div class="progress" style="flex:1"><div style="width:${total ? boxedAll / total * 100 : 0}%;background:${boxedAll === total ? "var(--good)" : "var(--brand-2)"}"></div></div>
+            <span class="small"><b>${fmtN(boxedAll)}</b> / ${fmtN(total)} units boxed · <b>${L.length}</b> boxes</span></div></div></div>
+        <div class="boxing">
+          <div class="card flush"><div class="card-h" style="padding:12px 14px 0"><h2>Products (${(s.items || []).length})</h2>
+            <div class="row"><button class="sm" id="caseall" title="Fill boxes using each product's usual units per box">Box all with case qty</button><button class="sm" id="boxrest">Box all remaining</button></div></div>
+            <div class="bx-items">${(s.items || []).map((it) => {
+              const info = itemInfo[it.msku] || {}, boxed = boxedOf(s, it.msku), left = it.quantity - boxed;
+              return `<div class="bx-item"><div class="prod-cell">${thumb(info.image, 44)}<div class="meta"><div class="ttl" style="max-width:260px;color:var(--text)">${esc(info.title || it.msku)}</div>
+                <div class="small"><span class="badge">${esc(it.msku)}</span> <span class="badge mono">${esc(fnskuOf(s, it.msku))}</span>${info.units_per_box ? ` <span class="badge info">${info.units_per_box}/box</span>` : ""}</div></div></div>
+                <div class="row" style="gap:6px;margin-top:6px"><b class="${left === 0 ? "good" : left < 0 ? "bad" : ""}">${fmtN(boxed)} / ${fmtN(it.quantity)}</b>
+                  ${left > 0 ? `<button class="sm primary" data-addbox="${esc(it.msku)}">+ Boxes</button><button class="sm" data-addall="${esc(it.msku)}">All ${fmtN(left)} in 1 box</button>` : left < 0 ? `<span class="small bad">${-left} too many</span>` : `<span class="small good">✓ boxed</span>`}
+                  <button class="sm" data-fn="${esc(it.msku)}" title="FNSKU unit labels">🏷 ${fmtN(it.quantity)}</button></div></div>`;
+            }).join("")}</div></div>
+          <div class="card flush"><div class="card-h" style="padding:12px 14px 0"><h2>Boxes (${L.length})</h2>
+            <div class="row" style="gap:6px"><label class="chk small"><input type="checkbox" id="selall" ${L.length && sel.size === L.length ? "checked" : ""}> All</label>
+              <button class="sm" id="newbox">+ Empty box</button><button class="sm" id="bulk" ${sel.size ? "" : "disabled"}>Bulk edit (${sel.size})</button>
+              <button class="sm" id="psel" ${sel.size ? "" : "disabled"}>Print selected</button><button class="sm primary" id="pall" ${L.length ? "" : "disabled"}>Print all</button>
+              <select id="fmt" class="sm" title="Label layout"><option value="letter2" ${fmt === "letter2" ? "selected" : ""}>Letter · 2 per page</option><option value="4x6" ${fmt === "4x6" ? "selected" : ""}>4×6 thermal</option></select>
+              <button class="sm danger" id="delsel" ${sel.size ? "" : "disabled"}>Delete</button></div></div>
+            <div class="bx-boxes">${L.map((b, i) => `<div class="bx-box ${sel.has(i) ? "sel" : ""}">
+                <label class="chk"><input type="checkbox" data-sel="${i}" ${sel.has(i) ? "checked" : ""}></label>
+                <div style="min-width:0;flex:1"><div class="row" style="gap:6px"><b>Box ${i + 1}</b>${b.printed ? `<span class="badge good" title="Printed ${b.printed}×">printed</span>` : ""}
+                  <span class="small">${b.items.map((x) => `<span class="badge" title="${esc(x.msku)}">${esc(fnskuOf(s, x.msku))} × <b>${x.qty}</b></span>`).join(" ") || '<span class="faint">empty</span>'}</span></div>
+                  <div class="row small" style="gap:4px;margin-top:6px">Weight <input class="w-num bxn" data-b="${i}" data-k="weight" value="${b.weight ?? ""}" placeholder="lb">
+                    &nbsp;Dims <input class="w-num bxn" data-b="${i}" data-k="length" value="${b.length ?? ""}" placeholder="L">×<input class="w-num bxn" data-b="${i}" data-k="width" value="${b.width ?? ""}" placeholder="W">×<input class="w-num bxn" data-b="${i}" data-k="height" value="${b.height ?? ""}" placeholder="H"> in</div></div>
+                <div class="row" style="gap:4px"><button class="sm" data-edit="${i}">Contents</button><button class="sm" data-print="${i}">Print</button><button class="sm danger" data-del="${i}" title="Delete box">×</button></div></div>`).join("") || `<div class="empty">No boxes yet — use <b>+ Boxes</b> next to a product.</div>`}</div></div>
+        </div>
+        <div class="card row between" style="position:sticky;bottom:8px;z-index:5">
+          <span class="small muted">${allBoxed ? (missingDims ? "Enter weight and dimensions for every box, then submit." : "All units boxed. Submit when the boxes are packed and labeled.") : "Box every unit (all shipments) before submitting."} Box numbers on the labels match what's submitted to Amazon.</span>
+          <button class="primary" id="submit" ${allBoxed && !missingDims ? "" : "disabled"}>Submit box content to Amazon →</button></div>`;
+
+      // ---- events ----
+      $$("[data-tab]").forEach((b) => b.onclick = () => { cur = Number(b.dataset.tab); sel.clear(); draw(); });
+      $$("[data-addbox]").forEach((b) => b.onclick = () => addBoxesDialog(s, b.dataset.addbox));
+      $$("[data-addall]").forEach((b) => b.onclick = () => { const m = b.dataset.addall; L.push({ items: [{ msku: m, qty: (s.items.find((x) => x.msku === m).quantity) - boxedOf(s, m) }], ...specDims(m) }); changed(); });
+      $$("[data-fn]").forEach((b) => b.onclick = () => window.open(`/api/ship/plans/${id}/unit-labels?sku=${encodeURIComponent(b.dataset.fn)}&type=letter`, "_blank"));
+      $("#caseall").onclick = () => {
+        let n = 0;
+        for (const it of s.items || []) {
+          const upb = itemInfo[it.msku]?.units_per_box; let left = it.quantity - boxedOf(s, it.msku);
+          if (!upb || left <= 0) continue;
+          while (left >= upb) { L.push({ items: [{ msku: it.msku, qty: upb }], ...specDims(it.msku) }); left -= upb; n++; }
+          if (left > 0) { L.push({ items: [{ msku: it.msku, qty: left }], ...specDims(it.msku) }); n++; }
+        }
+        toast(n ? `Created ${n} boxes` : "No usual case quantities on file yet — they're remembered after your first submit. Use + Boxes."); changed();
+      };
+      $("#boxrest").onclick = () => { for (const it of s.items || []) { const left = it.quantity - boxedOf(s, it.msku); if (left > 0) L.push({ items: [{ msku: it.msku, qty: left }], ...specDims(it.msku) }); } changed(); };
+      $("#newbox").onclick = () => { L.push({ items: [], ...lastDims() }); editContents(s, L.length - 1); };
+      $("#selall").onchange = () => { sel.clear(); if ($("#selall").checked) L.forEach((_, i) => sel.add(i)); draw(); };
+      $$("[data-sel]").forEach((c) => c.onchange = () => { const i = Number(c.dataset.sel); c.checked ? sel.add(i) : sel.delete(i); draw(); });
+      $$(".bxn").forEach((inp) => inp.onchange = () => { const v = inp.value === "" ? null : Number(inp.value); L[inp.dataset.b][inp.dataset.k] = v; save(); });
+      $$("[data-edit]").forEach((b) => b.onclick = () => editContents(s, Number(b.dataset.edit)));
+      $$("[data-print]").forEach((b) => b.onclick = () => printLabels(s, [Number(b.dataset.print)]));
+      $$("[data-del]").forEach((b) => b.onclick = () => { L.splice(Number(b.dataset.del), 1); sel.clear(); changed(); });
+      $("#psel").onclick = () => printLabels(s, [...sel].sort((a, b) => a - b));
+      $("#pall").onclick = () => printLabels(s, L.map((_, i) => i));
+      $("#fmt").onchange = () => { fmt = $("#fmt").value; try { localStorage.setItem("mm-labelfmt", fmt); } catch {} };
+      $("#delsel").onclick = async () => {
+        if (!await confirmBox(`Delete ${sel.size} boxes?`, "Boxes after them are renumbered — reprint their labels.", "Delete")) return;
+        const keep = L.filter((_, i) => !sel.has(i)); L.length = 0; L.push(...keep); sel.clear(); changed();
+      };
+      $("#bulk").onclick = () => {
+        const m = modal(`<h2>Edit ${sel.size} boxes</h2><p class="small muted">Leave a field empty to keep each box's current value.</p><div class="form-grid">
+          ${[["weight", "Weight (lb)"], ["length", "Length (in)"], ["width", "Width (in)"], ["height", "Height (in)"]].map(([k, l]) => `<label class="f">${l}<input type="number" step="0.1" data-bk="${k}"></label>`).join("")}</div>
+          <div class="foot"><button data-close>Cancel</button><button class="primary" id="bok">Apply</button></div>`);
+        $("#bok", m.el).onclick = () => { $$("[data-bk]", m.el).forEach((i) => { if (i.value !== "") for (const ix of sel) L[ix][i.dataset.bk] = Number(i.value); }); m.close(); changed(); };
+      };
+      $("#submit").onclick = () => {
+        const boxes = Object.fromEntries(shipments.map((sh) => [sh.shipmentId, boxList[sh.shipmentId].map((b) => ({ count: 1, length: b.length, width: b.width, height: b.height, weight: b.weight, items: b.items }))]));
+        run("boxes_submit", { boxes }, "Submit box content?", `<p>${shipments.map((sh) => `<b>${esc(sh.warehouse)}</b>: ${boxList[sh.shipmentId].length} boxes`).join("<br>")}</p><p>Make sure the printed labels are on the boxes in the same numbers.</p>`, "Submit to Amazon");
+      };
     };
-    drawG();
+
+    const specDims = (msku) => { const i = itemInfo[msku] || {}; const ld = lastDims(); return i.length ? { length: i.length, width: i.width, height: i.height, weight: i.weight } : ld; };
+
+    const addBoxesDialog = (s, msku) => {
+      const it = s.items.find((x) => x.msku === msku), left = it.quantity - boxedOf(s, msku), sp = specDims(msku);
+      const upb0 = itemInfo[msku]?.units_per_box || left;
+      const m = modal(`<h2>Add boxes — ${esc(msku)}</h2><p class="small muted">${fmtN(left)} units left to box.</p><div class="form-grid">
+        <label class="f">Units per box<input type="number" min="1" id="ab-u" value="${Math.min(upb0, left)}"></label>
+        <label class="f">Number of boxes<input type="number" min="1" id="ab-n" value="${Math.max(1, Math.floor(left / Math.min(upb0, left)))}"></label>
+        <label class="f">Weight per box (lb)<input type="number" step="0.1" id="ab-w" value="${sp.weight ?? ""}"></label>
+        <label class="f">Length (in)<input type="number" step="0.1" id="ab-l" value="${sp.length ?? ""}"></label>
+        <label class="f">Width (in)<input type="number" step="0.1" id="ab-wd" value="${sp.width ?? ""}"></label>
+        <label class="f">Height (in)<input type="number" step="0.1" id="ab-h" value="${sp.height ?? ""}"></label></div>
+        <p class="small" id="ab-sum"></p>
+        <div class="foot"><button data-close>Cancel</button><button class="primary" id="ab-ok">Add boxes</button></div>`);
+      const sum = () => { const u = +$("#ab-u", m.el).value, n = +$("#ab-n", m.el).value; $("#ab-sum", m.el).innerHTML = `${n} box${n === 1 ? "" : "es"} × ${u} = <b>${fmtN(u * n)}</b> units${u * n > left ? ` <span class="bad">(${fmtN(u * n - left)} more than left)</span>` : ` · ${fmtN(left - u * n)} left after`}`; };
+      $("#ab-u", m.el).oninput = sum; $("#ab-n", m.el).oninput = sum; sum();
+      $("#ab-ok", m.el).onclick = () => {
+        const u = Math.round(+$("#ab-u", m.el).value), n = Math.round(+$("#ab-n", m.el).value);
+        if (!(u > 0 && n > 0)) return toast("Enter units per box and number of boxes.", true);
+        if (u * n > left) return toast(`That's ${u * n - left} more than the units left.`, true);
+        const dims = { weight: num($("#ab-w", m.el).value), length: num($("#ab-l", m.el).value), width: num($("#ab-wd", m.el).value), height: num($("#ab-h", m.el).value) };
+        for (let k = 0; k < n; k++) boxList[s.shipmentId].push({ items: [{ msku, qty: u }], ...dims });
+        m.close(); changed();
+      };
+    };
+    const num = (v) => (v === "" || v === null ? null : Number(v));
+
+    const editContents = (s, bi) => {
+      const b = boxList[s.shipmentId][bi];
+      const m = modal(`<h2>Box ${bi + 1} — contents</h2><div class="tbl-wrap"><table class="t"><thead><tr><th>Product</th><th>FNSKU</th><th class="n">Left to box</th><th class="n">In this box</th></tr></thead><tbody>
+        ${(s.items || []).map((it) => { const inBox = b.items.find((x) => x.msku === it.msku)?.qty || 0; const left = it.quantity - boxedOf(s, it.msku) + inBox;
+          return `<tr><td class="small">${esc(it.msku)}</td><td class="mono small">${esc(fnskuOf(s, it.msku))}</td><td class="n">${fmtN(left)}</td><td class="n"><input class="w-num" type="number" min="0" max="${left}" data-c="${esc(it.msku)}" value="${inBox || ""}"></td></tr>`; }).join("")}
+        </tbody></table></div><div class="foot"><button data-close>Cancel</button><button class="primary" id="ec-ok">Save</button></div>`, true);
+      $("#ec-ok", m.el).onclick = () => {
+        b.items = $$("[data-c]", m.el).map((i) => ({ msku: i.dataset.c, qty: Math.round(Number(i.value) || 0) })).filter((x) => x.qty > 0);
+        m.close(); changed();
+      };
+    };
+
+    const printLabels = async (s, idxs) => {
+      const L = boxList[s.shipmentId];
+      if (!idxs.length) return;
+      if (!s.confirmationId) return toast("This shipment has no Amazon shipment ID yet — press Refresh.", true);
+      const empty = idxs.filter((i) => !L[i].items.length);
+      if (empty.length) return toast(`Box ${empty.map((i) => i + 1).join(", ")} is empty.`, true);
+      const from = p.address || {}, to = s.destAddress || {};
+      const labels = idxs.map((i) => {
+        const b = L[i], n = i + 1;
+        const twoD = `AMZN,PO:${s.confirmationId},` + b.items.map((x) => `FNSKU:${fnskuOf(s, x.msku)},QTY:${x.qty}`).join(",");
+        const contents = b.items.length === 1
+          ? `${(itemInfo[b.items[0].msku]?.title || b.items[0].msku).slice(0, 60)} - [${fnskuOf(s, b.items[0].msku)}] - ${b.items[0].qty}`
+          : `Mixed SKUs (${b.items.length}) - ${b.items.reduce((a, x) => a + x.qty, 0)} units`;
+        return { n, of: L.length, twoD, boxId: `${s.confirmationId}U${String(n).padStart(6, "0")}`, contents, mixed: b.items.length > 1 ? b.items.map((x) => `${fnskuOf(s, x.msku)} × ${x.qty}`) : [] };
+      });
+      const w = window.open("", "_blank");
+      if (!w) return toast("Allow pop-ups for this site to print labels.", true);
+      w.document.write("<p style='font:14px Arial;padding:20px'>Preparing labels…</p>");
+      let bw;
+      try { bw = await loadBarcodes(); } catch (e) { w.close(); return toast("Couldn't load the barcode generator — check your connection.", true); }
+      const svg = (opts, style) => { try { return bw.toSVG(opts).replace("<svg ", `<svg style="${style}" preserveAspectRatio="none" `); } catch (e) { return `<p style="color:red">Barcode error: ${esc(e.message || e)}</p>`; } };
+      w.document.open();
+      const page = fmt === "4x6" ? "@page{size:4in 6in;margin:0}.lab{width:4in;height:6in;page-break-after:always}" : "@page{size:letter;margin:0.25in}.lab{width:4in;height:5.1in;margin:0 auto 0.3in}.lab:nth-child(2n){page-break-after:always}";
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Box labels ${esc(s.confirmationId)}</title>
+        <style>${page}body{margin:0;font-family:Arial,Helvetica,sans-serif}.lab{box-sizing:border-box;padding:0.15in;border:1px dashed #ccc;overflow:hidden;display:flex;flex-direction:column}
+        .c{text-align:center}.tiny{font:9px 'Courier New',monospace}.bar{background:#000;color:#fff;font-weight:bold;padding:2px 6px;display:flex;justify-content:space-between;font-size:13px}
+        .two{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:10.5px;margin:4px 0;border-top:2px solid #000;padding-top:3px}.two b.big{font-size:20px}
+        .hd{display:flex;justify-content:space-between;align-items:center;border-top:2px solid #000;margin-top:2px}.hd .fba{font:bold 18px 'Courier New',monospace}
+        .ct{font:10px 'Courier New',monospace;border-top:2px solid #000;padding-top:3px;margin-top:auto}svg{display:block;margin:0 auto}
+        @media screen{body{background:#eee}.lab{background:#fff;margin:12px auto}}</style>
+        </head><body>
+        ${labels.map((l) => `<div class="lab">
+          <div class="c">${svg({ bcid: "pdf417", text: l.twoD, columns: 6, scale: 2, padding: 2 }, "width:3.3in;height:1.15in")}</div><div class="tiny c">${esc(l.twoD.length > 70 ? l.twoD.slice(0, 70) + "…" : l.twoD)}</div>
+          <div class="c" style="font-size:9px;font-weight:bold;letter-spacing:.5px">PLEASE LEAVE THIS LABEL UNCOVERED</div>
+          <div class="hd"><span class="fba">FBA</span><span class="bar" style="flex:1;margin-left:8px"><span>BOX ${l.n} OF ${l.of}</span><span>${esc(s.warehouse || "")}</span></span></div>
+          <div class="two"><div>SHIP FROM:<br><b>${esc(from.name || "")}</b><br>${esc(from.addressLine1 || "")}${from.addressLine2 ? " " + esc(from.addressLine2) : ""}<br>${esc(from.city || "")} ${esc(from.stateOrProvinceCode || "")} ${esc(from.postalCode || "")} ${esc(from.countryCode || "")}</div>
+            <div>SHIP TO:<br><b class="big">${esc(s.warehouse || to.name || "")}</b><br>${esc(to.addressLine1 || "")}${to.addressLine2 ? " " + esc(to.addressLine2) : ""}<br>${esc(to.city || "")} ${esc(to.stateOrProvinceCode || "")} ${esc(to.postalCode || "")}</div></div>
+          <div class="bar"><span>${esc(s.name || p.name)}</span></div>
+          <div class="c" style="font-size:9px;font-weight:bold;margin-top:4px">Purchase Order / Shipment ID</div>
+          <div class="c">${svg({ bcid: "code128", text: l.boxId, height: 14, scale: 2 }, "width:3.2in;height:0.7in")}</div><div class="c" style="font:bold 13px Arial">${esc(l.boxId)}</div>
+          <div class="ct">${esc(l.contents)}${l.mixed.length ? `<br>${l.mixed.map(esc).join(" · ")}` : ""}</div></div>`).join("")}
+        </body></html>`);
+      w.document.close();
+      setTimeout(() => { try { w.focus(); w.print(); } catch { /* user can print manually */ } }, 400);
+      for (const i of idxs) L[i].printed = (L[i].printed || 0) + 1;
+      save(); draw();
+    };
+    draw();
   };
 
   const labelButtons = (s, freight) => `<span class="small muted">Labels:</span>
