@@ -1299,7 +1299,7 @@ async function shipPlanPage(el, id) {
     const [sl, sc] = STATUS_LABEL[p.status] || [p.status, ""];
     const d = p.data || {};
     const units = p.items.reduce((s, i) => s + i.qty, 0);
-    el.innerHTML = header(esc(p.name), `<span class="badge ${sc}">${sl}</span> · ${p.items.length} products · ${fmtN(units)} units · target <b>${esc(d.target?.warehouse || "HEA2")}</b>${p.inbound_plan_id ? ` · <a target="_blank" rel="noopener" href="https://sellercentral.amazon.com/fba/sendtoamazon?wf=${encodeURIComponent(p.inbound_plan_id)}">Seller Central</a>` : ""}`,
+    el.innerHTML = header(esc(p.name), `<span class="badge ${sc}">${sl}</span> · ${p.items.length} products · ${fmtN(units)} units · target <b>${esc((d.target?.warehouses || [d.target?.warehouse || "HEA2"]).join(", "))}</b>${p.inbound_plan_id ? ` · <a target="_blank" rel="noopener" href="https://sellercentral.amazon.com/fba/sendtoamazon?wf=${encodeURIComponent(p.inbound_plan_id)}">Seller Central</a>` : ""}`,
       `<a class="btn" href="#/shipping">← All shipments</a><button id="pick">Pick list</button><button id="ul">FNSKU labels (Letter)</button>
        ${canSpend() && p.status !== "cancelled" && p.inbound_plan_id ? `<button class="danger" id="cancel">Cancel in Amazon</button>` : ""}
        ${canSpend() && (p.status === "draft" || p.status === "cancelled") ? `<button class="danger" id="del">Delete</button>` : ""}`) + `
@@ -1353,27 +1353,71 @@ async function shipPlanPage(el, id) {
   };
 
   // ---- 1. plan ----
-  const drawPlan = (box, d) => {
+  const drawPlan = async (box, d) => {
     if (!canSpend()) { box.innerHTML = `<div class="card small muted">A manager or admin sends this to Amazon.</div>`; return; }
-    const a = p.address || defaults.address || {};
+    const a = { countryCode: "US", ...(p.address || defaults.address || {}) };
     const t = { ...(defaults.target || {}), ...(d.target || {}) };
-    const F = [["name", "Name / contact"], ["companyName", "Company"], ["addressLine1", "Street"], ["addressLine2", "Street line 2"], ["city", "City"], ["stateOrProvinceCode", "State"], ["postalCode", "ZIP"], ["phoneNumber", "Phone"], ["email", "Email"]];
-    box.innerHTML = `<div class="grid g2">
-      <div class="card"><h2>Target warehouse</h2><div class="form-grid">
-        <label class="f">Warehouse code<input id="tw" value="${esc(t.warehouse || "HEA2")}" style="text-transform:uppercase"></label>
-        <label class="f">Accept<select id="tm"><option value="all" ${t.match !== "partial" ? "selected" : ""}>Everything to this warehouse</option><option value="partial" ${t.match === "partial" ? "selected" : ""}>At least part to this warehouse</option></select></label>
-        <label class="f">Re-check every<select id="th">${[1, 2, 3, 4, 6, 8, 12, 24].map((h) => `<option value="${h}" ${Number(t.everyHours || 2) === h ? "selected" : ""}>${h} hour${h > 1 ? "s" : ""}</option>`).join("")}</select></label>
-        <label class="f">Max placement fee ($, optional)<input id="tf" type="number" step="0.01" value="${t.maxFee ?? ""}"></label></div>
-        <p class="small muted">After the plan is created, the system asks Amazon for warehouse options and keeps asking on this schedule until a matching option appears. Then it emails you. Confirming is always your decision.</p></div>
-      <div class="card"><h2>Ship from</h2><details ${a.addressLine1 ? "" : "open"}><summary class="small">${esc([a.name, a.addressLine1, a.city, a.stateOrProvinceCode, a.postalCode].filter(Boolean).join(", ") || "Enter address")}</summary>
-        <div class="form-grid" style="margin-top:10px">${F.map(([k, l]) => `<label class="f">${l}<input data-a="${k}" value="${esc(a[k] || "")}"></label>`).join("")}</div></details></div></div>
-      <div class="card row between"><span class="small muted">Creates the "Send to Amazon" plan and starts looking for ${esc(t.warehouse || "HEA2")}. Nothing is charged at this step.</span>
-        <button class="primary" id="create">Create in Amazon & find ${esc(t.warehouse || "HEA2")} →</button></div>`;
+    let wanted = [...(t.warehouses || ["HEA2"])];
+    const known = defaults.warehouses || [];
+    const recent = defaults.recentAddresses || [];
+    let prepDefault = d.prepDefault || defaults.prepDefault || "NONE";
+    const overrides = { ...(d.ownerOverrides || {}) };
+    const F = [["name", "Name / contact"], ["companyName", "Company"], ["addressLine1", "Street"], ["addressLine2", "Street line 2"], ["city", "City"],
+      ["stateOrProvinceCode", "State / province"], ["postalCode", "ZIP / postal code"], ["countryCode", "Country (2 letters)"], ["phoneNumber", "Phone"], ["email", "Email"]];
+    const addrLabel = (x) => [x.addressLine1, x.city, x.stateOrProvinceCode, x.postalCode, x.countryCode].filter(Boolean).join(", ");
+    box.innerHTML = `<div class="card"><h2>Warehouses you'll accept</h2>
+        <div class="row" id="whsel" style="gap:6px"></div>
+        <div class="row" style="margin-top:10px;gap:6px"><span class="small muted">Your warehouses (shipments in the last year):</span><span id="whknown" class="row" style="gap:6px"></span></div>
+        <div class="filters" style="margin-top:10px">
+          <label class="f">Add another code<input id="whadd" placeholder="e.g. ABE8" style="width:120px;text-transform:uppercase"></label><button id="whaddb">Add</button>
+          <label class="f">Accept<select id="tm"><option value="all" ${t.match !== "partial" ? "selected" : ""}>Everything to these warehouses</option><option value="partial" ${t.match === "partial" ? "selected" : ""}>At least part to these warehouses</option></select></label>
+          <label class="f">Re-check every<select id="th">${[1, 2, 3, 4, 6, 8, 12, 24].map((h) => `<option value="${h}" ${Number(t.everyHours || 2) === h ? "selected" : ""}>${h} hour${h > 1 ? "s" : ""}</option>`).join("")}</select></label>
+          <label class="f">Max placement fee ($, optional)<input id="tf" type="number" step="0.01" value="${t.maxFee ?? ""}" style="width:120px"></label></div></div>
+      <div class="card"><div class="card-h"><h2>Ship from</h2>${recent.length ? `<label class="row small muted" style="gap:6px">Use a recent address<select id="recent"><option value="">—</option>${recent.map((x, i) => `<option value="${i}">${esc(addrLabel(x))}</option>`).join("")}</select></label>` : ""}</div>
+        <div class="form-grid">${F.map(([k, l]) => `<label class="f">${l}<input data-a="${k}" value="${esc(a[k] || "")}"></label>`).join("")}</div>
+        <p class="small muted" style="margin-bottom:0">Every field can be changed. Amazon checks the address when the plan is created; if it's rejected, its exact message shows at the top of this page.</p></div>
+      <div class="card"><div class="card-h"><h2>Prep & labels</h2>
+        <label class="row small" style="gap:6px">When Amazon lets you choose:<select id="pd"><option value="NONE" ${prepDefault === "NONE" ? "selected" : ""}>No prep required</option><option value="SELLER" ${prepDefault === "SELLER" ? "selected" : ""}>Seller does prep</option></select></label></div>
+        <p class="small muted" style="margin-top:-4px">Amazon sets a fixed rule for many products (shown with a lock) — those are applied automatically so the plan isn't rejected. You can change the others.</p>
+        <div id="preptbl"><div class="loading"><span class="spinner"></span> Asking Amazon for each product's prep rules…</div></div></div>
+      <div class="card row between"><span class="small muted">Creates the "Send to Amazon" plan and starts looking for <b id="whsum"></b>. Nothing is charged at this step.</span>
+        <button class="primary" id="create">Create in Amazon & find warehouse →</button></div>`;
+    const drawWh = () => {
+      $("#whsel").innerHTML = wanted.length ? wanted.map((w) => `<span class="chip" style="font-size:13px">${esc(w)}<button type="button" data-rmw="${esc(w)}" title="Remove">×</button></span>`).join("") : `<span class="small bad">Pick at least one warehouse</span>`;
+      $("#whknown").innerHTML = known.map((k) => `<button class="sm ${wanted.includes(k.code) ? "primary" : ""}" data-tgw="${esc(k.code)}">${esc(k.code)} <span class="faint">${k.shipments}</span></button>`).join("") || `<span class="small faint">loading…</span>`;
+      $("#whsum").textContent = wanted.join(", ") || "—";
+      $$("[data-rmw]").forEach((b) => b.onclick = () => { wanted = wanted.filter((x) => x !== b.dataset.rmw); drawWh(); });
+      $$("[data-tgw]").forEach((b) => b.onclick = () => { const c = b.dataset.tgw; wanted = wanted.includes(c) ? wanted.filter((x) => x !== c) : [...wanted, c]; drawWh(); });
+    };
+    drawWh();
+    $("#whaddb").onclick = () => { const c = $("#whadd").value.trim().toUpperCase(); if (c && !wanted.includes(c)) wanted.push(c); $("#whadd").value = ""; drawWh(); };
+    if ($("#recent")) $("#recent").onchange = () => {
+      const x = recent[Number($("#recent").value)]; if (!x) return;
+      $$("[data-a]").forEach((i) => { i.value = x[i.dataset.a] || ""; });
+    };
+    const OWN = { SELLER: "Seller", NONE: "None", AMAZON: "Amazon" };
+    const loadPrep = async () => {
+      $("#preptbl").innerHTML = `<div class="loading"><span class="spinner"></span> Asking Amazon for each product's prep rules…</div>`;
+      let o;
+      try { o = await GET(`/ship/plans/${id}/prep?default=${prepDefault}`); }
+      catch (e) { $("#preptbl").innerHTML = `<div class="banner warn"><div class="txt">Couldn't load prep rules: ${esc(e.message)}</div></div>`; return; }
+      for (const [sku, ov] of Object.entries(overrides)) if (o[sku]) { if (!o[sku].prepFixed && ov.prepOwner) o[sku].prepOwner = ov.prepOwner; if (!o[sku].labelFixed && ov.labelOwner) o[sku].labelOwner = ov.labelOwner; }
+      const sel = (sku, kind, v, fixed) => fixed ? `<span title="Fixed by Amazon">🔒 ${OWN[v] || v}</span>`
+        : `<select data-own="${esc(sku)}" data-kind="${kind}">${["NONE", "SELLER", "AMAZON"].map((x) => `<option value="${x}" ${x === v ? "selected" : ""}>${OWN[x]}</option>`).join("")}</select>`;
+      $("#preptbl").innerHTML = `<div class="tbl-wrap"><table class="t"><thead><tr><th>Product</th><th>Prep needed</th><th>Prep by</th><th>Labels by</th><th></th></tr></thead><tbody>
+        ${p.items.map((i) => { const x = o[i.sku] || {}; return `<tr><td class="mono small">${esc(i.sku)}</td><td class="small">${x.prepTypes?.length ? x.prepTypes.map((t) => esc(t.replace(/^ITEM_/, "").replace(/_/g, " ").toLowerCase())).join(", ") : '<span class="faint">none</span>'}</td>
+          <td>${sel(i.sku, "prepOwner", x.prepOwner, x.prepFixed)}</td><td>${sel(i.sku, "labelOwner", x.labelOwner, x.labelFixed)}</td>
+          <td class="small faint">${x.mustMatch ? "prep & label must be the same" : ""}${x.known === false ? "Amazon has no rule on file" : ""}</td></tr>`; }).join("")}</tbody></table></div>`;
+      $$("[data-own]").forEach((s) => s.onchange = () => { overrides[s.dataset.own] = { ...(overrides[s.dataset.own] || {}), [s.dataset.kind]: s.value }; });
+    };
+    $("#pd").onchange = () => { prepDefault = $("#pd").value; loadPrep(); };
+    loadPrep();
     $("#create").onclick = () => {
+      if (!wanted.length) return toast("Pick at least one warehouse.", true);
       const address = Object.fromEntries($$("[data-a]").map((i) => [i.dataset.a, i.value.trim()]));
-      address.countryCode = "US";
-      const target = { warehouse: $("#tw").value.trim().toUpperCase(), match: $("#tm").value, everyHours: Number($("#th").value), maxFee: $("#tf").value === "" ? null : Number($("#tf").value) };
-      run("create", { address, target });
+      address.countryCode = (address.countryCode || "US").toUpperCase();
+      const target = { warehouses: wanted, match: $("#tm").value, everyHours: Number($("#th").value), maxFee: $("#tf").value === "" ? null : Number($("#tf").value) };
+      run("create", { address, target, prepDefault, owners: overrides });
     };
   };
 
@@ -1383,14 +1427,14 @@ async function shipPlanPage(el, id) {
     const opts = (d.placementOptions || []).slice().sort((a, b) => (b.matchesTarget ? 1 : 0) - (a.matchesTarget ? 1 : 0) || optFee(a) - optFee(b));
     const found = p.status === "found";
     box.innerHTML = `<div class="card" style="border-color:${found ? "var(--good)" : "var(--line)"}"><div class="row between">
-        <div>${found ? `<h2 class="good" style="margin:0">✓ ${esc(t.warehouse)} is available</h2>` : `<h2 style="margin:0">Looking for ${esc(t.warehouse)}${d.paused ? " (paused)" : ""}</h2>`}
+        <div>${found ? `<h2 class="good" style="margin:0">✓ A warehouse you want is available</h2>` : `<h2 style="margin:0">Looking for ${esc((t.warehouses || [t.warehouse]).join(", "))}${d.paused ? " (paused)" : ""}</h2>`}
           <div class="small muted">${t.match === "partial" ? "Accepting options with part of the shipment there" : "Waiting for everything to go there"}${t.maxFee != null ? ` · fee up to ${fmt$(t.maxFee)}` : ""} · checked ${fmtN(d.checks || 0)} time${d.checks === 1 ? "" : "s"}, last ${ago(d.lastCheck)}${!found && d.nextCheck && !d.paused ? ` · next check ${dt(d.nextCheck)}` : ""}</div></div>
         ${canSpend() ? `<div class="row"><button id="chk">Check now</button><button id="edt">Change target</button>${!found ? `<button id="pause">${d.paused ? "Resume" : "Pause"}</button>` : ""}</div>` : ""}</div>
       ${(d.history || []).length ? `<div class="small faint" style="margin-top:8px">Recent offers: ${(d.history || []).slice(-6).reverse().map((h) => `${dt(h.at)} → ${esc(h.offered || "?")}${h.match ? " ✓" : ""}`).join(" · ")}</div>` : ""}</div>
       <div class="card"><h2>Warehouse options from Amazon</h2>
       ${opts.map((o) => `<div class="card" style="padding:12px;margin:8px 0;${o.matchesTarget ? "border-color:var(--good);box-shadow:inset 4px 0 0 var(--good)" : ""}"><div class="row between">
-          <div><b>${(o.shipmentIds || []).length} shipment${(o.shipmentIds || []).length === 1 ? "" : "s"}</b> ${o.matchesTarget ? `<span class="badge good">matches ${esc(t.warehouse)}</span>` : ""}
-            <div class="small" style="margin-top:4px">${(o.destinations || []).map((x) => `<span class="badge ${String(x.warehouse).toUpperCase() === String(t.warehouse).toUpperCase() ? "good" : ""}">${esc(x.warehouse || "?")}</span> ${esc(x.city || "")} ${esc(x.state || "")}${x.units ? ` — ${fmtN(x.units)} units` : ""}`).join(" &nbsp; ")}</div>
+          <div><b>${(o.shipmentIds || []).length} shipment${(o.shipmentIds || []).length === 1 ? "" : "s"}</b> ${o.matchesTarget ? `<span class="badge good">matches your warehouses</span>` : ""}
+            <div class="small" style="margin-top:4px">${(o.destinations || []).map((x) => `<span class="badge ${(t.warehouses || [t.warehouse]).includes(String(x.warehouse).toUpperCase()) ? "good" : ""}">${esc(x.warehouse || "?")}</span> ${esc(x.city || "")} ${esc(x.state || "")}${x.units ? ` — ${fmtN(x.units)} units` : ""}`).join(" &nbsp; ")}</div>
             ${o.expiration ? `<div class="small faint">offer expires ${dt(Date.parse(o.expiration))}</div>` : ""}</div>
           <div class="row"><b class="${optFee(o) > 0 ? "warn" : "good"}">Placement fee ${fmt$(optFee(o))}</b>${canSpend() ? `<button class="${o.matchesTarget ? "primary" : ""}" data-conf="${esc(o.placementOptionId)}">Confirm this</button>` : ""}</div></div></div>`).join("") || `<p class="muted">No options yet — press Check now.</p>`}</div>`;
     if (!canSpend()) return;
@@ -1398,12 +1442,12 @@ async function shipPlanPage(el, id) {
     if ($("#pause")) $("#pause").onclick = () => run("target", { paused: !d.paused });
     $("#edt").onclick = () => {
       const m = modal(`<h2>Target warehouse</h2><div class="form-grid">
-        <label class="f">Warehouse code<input id="tw" value="${esc(t.warehouse)}"></label>
+        <label class="f" style="grid-column:1/-1">Warehouse codes (comma separated)<input id="tw" value="${esc((t.warehouses || [t.warehouse]).join(", "))}"></label>
         <label class="f">Accept<select id="tm"><option value="all">Everything to this warehouse</option><option value="partial" ${t.match === "partial" ? "selected" : ""}>At least part</option></select></label>
         <label class="f">Re-check every (hours)<input id="th" type="number" min="1" value="${t.everyHours}"></label>
         <label class="f">Max placement fee ($)<input id="tf" type="number" step="0.01" value="${t.maxFee ?? ""}"></label></div>
         <div class="foot"><button data-close>Cancel</button><button class="primary" id="ok">Save</button></div>`);
-      $("#ok", m.el).onclick = () => { m.close(); run("target", { target: { warehouse: $("#tw", m.el).value.trim().toUpperCase(), match: $("#tm", m.el).value, everyHours: Number($("#th", m.el).value) || 2, maxFee: $("#tf", m.el).value === "" ? null : Number($("#tf", m.el).value) } }); };
+      $("#ok", m.el).onclick = () => { m.close(); run("target", { target: { warehouses: $("#tw", m.el).value.toUpperCase().split(/[\s,]+/).filter(Boolean), match: $("#tm", m.el).value, everyHours: Number($("#th", m.el).value) || 2, maxFee: $("#tf", m.el).value === "" ? null : Number($("#tf", m.el).value) } }); };
     };
     $$("[data-conf]").forEach((b) => b.onclick = () => {
       const o = opts.find((x) => x.placementOptionId === b.dataset.conf);

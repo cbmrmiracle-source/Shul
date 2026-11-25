@@ -15,7 +15,14 @@ const BASE = "/inbound/fba/2024-03-20";
 
 export class ShipError extends Error {}
 
-export const DEFAULT_TARGET = { warehouse: "HEA2", match: "all" as "all" | "partial", everyHours: 2, maxFee: null as number | null };
+export const DEFAULT_TARGET = { warehouses: ["HEA2"] as string[], warehouse: "HEA2", match: "all" as "all" | "partial", everyHours: 2, maxFee: null as number | null };
+
+/** Normalises a target (older plans stored a single `warehouse`). */
+export function normTarget(t: any) {
+  const list: string[] = (Array.isArray(t?.warehouses) && t.warehouses.length ? t.warehouses : [t?.warehouse || "HEA2"])
+    .map((x: string) => String(x).toUpperCase().trim()).filter(Boolean);
+  return { ...DEFAULT_TARGET, ...t, warehouses: [...new Set(list)], warehouse: list.join(", ") };
+}
 
 // ---------- helpers ----------
 
@@ -75,7 +82,7 @@ export function getPlan(S: Store, id: number) {
                        FROM ship_items i LEFT JOIN products p ON p.sku=i.sku LEFT JOIN inventory inv ON inv.sku=i.sku
                        LEFT JOIN box_specs b ON b.sku=i.sku WHERE i.plan_id=? ORDER BY i.sku`, id);
   const data = JSON.parse(p.data || "{}");
-  data.target = { ...DEFAULT_TARGET, ...(data.target || {}) };
+  data.target = normTarget(data.target || {});
   return { ...p, data, address: JSON.parse(p.address || "null"), items };
 }
 
@@ -183,11 +190,11 @@ export async function shipmentLabels(S: Store, plan: any, shipmentId: string, ki
 
 // ---------- warehouse targeting ----------
 
-function evaluate(opts: any[], target: typeof DEFAULT_TARGET) {
-  const wh = String(target.warehouse || "").toUpperCase().trim();
+function evaluate(opts: any[], target: any) {
+  const wanted = new Set(normTarget(target).warehouses);
   for (const o of opts) {
     const dests = (o.destinations || []).map((d: any) => String(d.warehouse || "").toUpperCase());
-    const hits = dests.filter((d: string) => d === wh).length;
+    const hits = dests.filter((d: string) => wanted.has(d)).length;
     o.matchesTarget = !!dests.length && (target.match === "partial" ? hits > 0 : hits === dests.length)
       && (target.maxFee === null || target.maxFee === undefined || optionFee(o) <= Number(target.maxFee));
   }
@@ -233,8 +240,8 @@ async function notifyFound(S: Store, plan: any, o: any) {
     if (!to.length) return;
     const link = S.publicOrigin() ? `${S.publicOrigin()}/#/shipping?id=${plan.id}` : undefined;
     await sendMail(S.secretGetter(), {
-      to, subject: `${plan.data.target.warehouse} offered for "${plan.name}"`,
-      html: emailLayout(`${plan.data.target.warehouse} is available`, `<p>Amazon now offers <b>${plan.data.target.warehouse}</b> for <b>${plan.name}</b>.</p>
+      to, subject: `${(o.destinations || []).map((d: any) => d.warehouse).join(" + ")} offered for "${plan.name}"`,
+      html: emailLayout(`Your warehouse is available`, `<p>Amazon now offers <b>${(o.destinations || []).map((d: any) => d.warehouse).join(" + ")}</b> for <b>${plan.name}</b> (you're accepting ${plan.data.target.warehouses.join(", ")}).</p>
         <p>${(o.destinations || []).map((d: any) => `${d.warehouse} ${d.city || ""} — ${d.units || "?"} units`).join("<br>")}</p>
         <p>Placement fee: <b>$${optionFee(o).toFixed(2)}</b>. Open the shipment to confirm — options expire, so don't wait too long.</p>`, link),
     });
@@ -260,18 +267,86 @@ export async function runTargeting(S: Store) {
 
 // ---------- workflow steps ----------
 
-async function prepOwners(S: Store, skus: string[]) {
-  const out: Record<string, string> = {};
+const OWNER_OF: Record<string, string> = { SELLER_ONLY: "SELLER", NONE_ONLY: "NONE", AMAZON_ONLY: "AMAZON" };
+
+/**
+ * Who preps / labels each SKU. Amazon publishes hard constraints per SKU (SELLER_ONLY, NONE_ONLY, AMAZON_ONLY, and
+ * "owners must match"); those always win. Where Amazon allows a choice we use the per-item override, else the plan's
+ * default (`prepDefault`: SELLER or NONE).
+ */
+export async function ownersFor(S: Store, items: { sku: string; fnsku?: string }[], prepDefault = "NONE", overrides: Record<string, any> = {}) {
+  const details: Record<string, any> = {};
+  const skus = items.map((i) => i.sku);
   for (let i = 0; i < skus.length; i += 50) {
     try {
       const b = await call(S, "GET", `${BASE}/items/prepDetails`, { marketplaceId: S.amz.marketplaceId, mskus: skus.slice(i, i + 50) });
-      for (const d of b.mskuPrepDetails || []) {
-        const types: string[] = d.prepTypes || [];
-        out[d.msku] = !types.length || types.every((t) => t === "ITEM_NO_PREP") ? "NONE" : "SELLER";
-      }
-    } catch { /* default below */ }
+      for (const d of b.mskuPrepDetails || []) details[d.msku] = d;
+    } catch { /* fall back to defaults */ }
+  }
+  const out: Record<string, any> = {};
+  for (const it of items) {
+    const d = details[it.sku] || {};
+    const ov = overrides[it.sku] || {};
+    const prepFixed = OWNER_OF[d.prepOwnerConstraint];
+    const labelFixed = OWNER_OF[d.labelOwnerConstraint];
+    let prepOwner = prepFixed || ov.prepOwner || prepDefault;
+    let labelOwner = labelFixed || ov.labelOwner || (it.fnsku && /^X0/.test(it.fnsku) ? "SELLER" : "NONE");
+    if (d.allOwnersConstraint === "MUST_MATCH") {
+      // label and prep owner must be the same party
+      if (prepFixed && !labelFixed) labelOwner = prepOwner;
+      else if (labelFixed && !prepFixed) prepOwner = labelOwner;
+      else if (!prepFixed && !labelFixed) prepOwner = labelOwner;
+    }
+    out[it.sku] = {
+      prepOwner, labelOwner, prepFixed: !!prepFixed, labelFixed: !!labelFixed, mustMatch: d.allOwnersConstraint === "MUST_MATCH",
+      prepTypes: (d.prepTypes || []).filter((t: string) => t !== "ITEM_LABELING"), prepCategory: d.prepCategory || null, known: !!details[it.sku],
+    };
   }
   return out;
+}
+
+/** Recent ship-from addresses used on this account (newest first, de-duplicated). */
+export async function recentAddresses(S: Store) {
+  const cached = S.setting<any>("recent_ship_from", null);
+  if (cached && Date.now() - cached.at < 6 * 3600_000) return cached.list;
+  const seen = new Set<string>(), list: any[] = [];
+  try {
+    const plans = await call(S, "GET", `${BASE}/inboundPlans`, { pageSize: 30, sortBy: "CREATION_TIME", sortOrder: "DESC" });
+    for (const pl of plans.inboundPlans || []) {
+      const a = pl.sourceAddress; if (!a) continue;
+      const key = [a.addressLine1, a.city, a.stateOrProvinceCode, a.postalCode, a.countryCode].join("|").toLowerCase();
+      if (seen.has(key)) continue; seen.add(key);
+      list.push({ name: a.name || "", companyName: a.companyName || "", addressLine1: a.addressLine1 || "", addressLine2: a.addressLine2 || "", city: a.city || "",
+        stateOrProvinceCode: a.stateOrProvinceCode || "", postalCode: a.postalCode || "", countryCode: a.countryCode || "US", phoneNumber: a.phoneNumber || "", email: a.email || "" });
+    }
+  } catch { /* not connected */ }
+  S.setSetting("recent_ship_from", { at: Date.now(), list });
+  return list;
+}
+
+/** Fulfillment centers this account has shipped to in the last year, with counts (cached daily). */
+export async function knownWarehouses(S: Store) {
+  const cached = S.setting<any>("known_fcs", null);
+  if (cached && Date.now() - cached.at < 24 * 3600_000) return cached.list;
+  const counts: Record<string, { code: string; shipments: number; last: string | null }> = {};
+  let token: string | undefined;
+  const after = new Date(Date.now() - 365 * 86_400_000).toISOString(), before = new Date(Date.now() - 60_000).toISOString();
+  for (let i = 0; i < 15; i++) {
+    const q: any = token ? { QueryType: "NEXT_TOKEN", NextToken: token }
+      : { QueryType: "DATE_RANGE", LastUpdatedAfter: after, LastUpdatedBefore: before, ShipmentStatusList: "WORKING,SHIPPED,RECEIVING,CLOSED,IN_TRANSIT,DELIVERED,CHECKED_IN" };
+    let b: any;
+    try { b = await call(S, "GET", "/fba/inbound/v0/shipments", q); } catch { break; }
+    for (const sh of b.payload?.ShipmentData || []) {
+      const c = sh.DestinationFulfillmentCenterId; if (!c) continue;
+      counts[c] = counts[c] || { code: c, shipments: 0, last: null };
+      counts[c].shipments++;
+    }
+    token = b.payload?.NextToken;
+    if (!token) break;
+  }
+  const list = Object.values(counts).sort((x, y) => y.shipments - x.shipments);
+  if (list.length) S.setSetting("known_fcs", { at: Date.now(), list });
+  return list;
 }
 
 /** Actions a Warehouse-role user may run (no fees involved). */
@@ -290,13 +365,14 @@ export async function step(S: Store, id: number, action: string, args: any) {
       const a = args.address || plan.address;
       need(a && a.addressLine1 && a.city && a.postalCode && a.stateOrProvinceCode && a.phoneNumber && a.name, "Fill in the full ship-from address (name, street, city, state, ZIP, phone).");
       S.setSetting("ship_from", a);
-      if (args.target) { data.target = { ...data.target, ...args.target }; S.setSetting("ship_target", { warehouse: data.target.warehouse, match: data.target.match, everyHours: data.target.everyHours }); }
+      if (args.target) { data.target = normTarget({ ...data.target, ...args.target }); S.setSetting("ship_target", { warehouses: data.target.warehouses, match: data.target.match, everyHours: data.target.everyHours }); }
+      if (args.prepDefault) { data.prepDefault = args.prepDefault; S.setSetting("prep_default", args.prepDefault); }
+      if (args.owners) data.ownerOverrides = args.owners;
       S.run(`UPDATE ship_plans SET address=? WHERE id=?`, JSON.stringify(a), id);
-      const prep = await prepOwners(S, plan.items.map((i: any) => i.sku));
+      const owners = await ownersFor(S, plan.items.map((i: any) => ({ sku: i.sku, fnsku: i.fnsku || i.cur_fnsku })),
+        data.prepDefault || S.setting("prep_default", "NONE"), data.ownerOverrides || {});
       const items = plan.items.map((i: any) => ({
-        msku: i.sku, quantity: i.qty,
-        labelOwner: i.fnsku && /^X0/.test(i.fnsku) ? "SELLER" : "NONE",
-        prepOwner: prep[i.sku] || "NONE",
+        msku: i.sku, quantity: i.qty, labelOwner: owners[i.sku].labelOwner, prepOwner: owners[i.sku].prepOwner,
       }));
       const address: any = { ...a, countryCode: a.countryCode || "US" };
       for (const k of Object.keys(address)) if (address[k] === "" || address[k] === null) delete address[k];
@@ -326,7 +402,7 @@ export async function step(S: Store, id: number, action: string, args: any) {
     }
 
     case "target": { // change target / schedule while hunting
-      data.target = { ...data.target, ...args.target };
+      data.target = normTarget({ ...data.target, ...args.target });
       if (args.paused !== undefined) data.paused = !!args.paused;
       if (data.placementOptions && evaluate(data.placementOptions, data.target).length) { saveData(S, id, data, "found"); }
       else { data.nextCheck = Date.now() + Math.max(1, Number(data.target.everyHours) || 2) * 3_600_000; saveData(S, id, data, pid ? "targeting" : plan.status); }

@@ -8,7 +8,7 @@ import { DEFAULT_RULES, REASON_MANUAL, REASON_REPRICE, REASON_SELLERS, enqueueOf
 import { DEFAULT_FEE_EMAIL, buildFeeEmail, diffFees, feeChanges, maybeSendFeeEmail } from "./fees";
 import { DEFAULT_INV_SETTINGS, compareRanges, inventoryRows, priceAnalysis, productMeta, resolveSkus, salesGrid, salesReport } from "./analysis";
 import { currentImages, processImageJobs, queueImageJob, storeUpload } from "./images";
-import { DEFAULT_TARGET, ShipError, WAREHOUSE_ACTIONS, createDraft, defaultAddress, getPlan, parseLines, runTargeting, setItems, shipmentLabels, step as shipStep, unitLabels } from "./shipping";
+import { DEFAULT_TARGET, ShipError, WAREHOUSE_ACTIONS, createDraft, defaultAddress, getPlan, knownWarehouses, normTarget, ownersFor, parseLines, recentAddresses, runTargeting, setItems, shipmentLabels, step as shipStep, unitLabels } from "./shipping";
 import { SALES_TZ, addDays, esc, hashPassword, num, parseCsv, randomToken, round2, safeEqual, today } from "./util";
 
 
@@ -711,7 +711,8 @@ export class Store extends DurableObject {
     }
     if (path === "/api/ship/address") return (await defaultAddress(this)) || {};
     if (path === "/api/ship/defaults") {
-      return { address: (await defaultAddress(this)) || null, contact: this.setting("freight_contact", null), target: { ...DEFAULT_TARGET, ...this.setting("ship_target", {}) } };
+      return { address: (await defaultAddress(this)) || null, contact: this.setting("freight_contact", null), target: normTarget({ ...DEFAULT_TARGET, ...this.setting("ship_target", {}) }),
+        prepDefault: this.setting("prep_default", "NONE"), recentAddresses: await recentAddresses(this), warehouses: await knownWarehouses(this) };
     }
     if (path === "/api/ship/parse" && method === "POST") {
       const b = await body();
@@ -740,6 +741,11 @@ export class Store extends DurableObject {
         this.run(`DELETE FROM ship_plans WHERE id=?`, id);
         return { ok: true };
       }
+      if (sub === "prep" && method === "GET") {
+        const p = getPlan(this, id);
+        return ownersFor(this, p.items.map((i: any) => ({ sku: i.sku, fnsku: i.fnsku || i.cur_fnsku })),
+          q.get("default") || p.data.prepDefault || this.setting("prep_default", "NONE"), p.data.ownerOverrides || {});
+      }
       if (sub === "items" && method === "PUT") { const b = await body(); setItems(this, id, b.items || []); return getPlan(this, id); }
       if (sub === "step" && method === "POST") {
         const b = await body();
@@ -749,6 +755,7 @@ export class Store extends DurableObject {
           this.run(`UPDATE ship_plans SET last_error=NULL WHERE id=?`, id);
           return out;
         } catch (e: any) {
+          console.error(`ship plan ${id} step ${b.action} failed: ${e.message}`);
           this.run(`UPDATE ship_plans SET last_error=?, updated_at=? WHERE id=?`, String(e.message).slice(0, 2000), Date.now(), id);
           // a failed create leaves nothing usable in Amazon: go back to draft so it can be fixed and retried
           if (b.action === "create") this.run(`UPDATE ship_plans SET status='draft', inbound_plan_id=NULL WHERE id=? AND status IN ('creating','draft')`, id);
