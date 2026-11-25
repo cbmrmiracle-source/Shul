@@ -55,7 +55,7 @@ async function listAll(S: Store, path: string, key: string, query: any = {}) {
   const out: any[] = [];
   let token: string | undefined;
   for (let i = 0; i < 20; i++) {
-    const b = await call(S, "GET", path, { pageSize: 100, ...query, ...(token ? { paginationToken: token } : {}) });
+    const b = await call(S, "GET", path, { pageSize: 20, ...query, ...(token ? { paginationToken: token } : {}) });
     out.push(...(b[key] || []));
     token = b.pagination?.nextToken;
     if (!token) break;
@@ -349,6 +349,31 @@ export async function knownWarehouses(S: Store) {
   return list;
 }
 
+/** After the plan exists in Amazon: make sure a packing option is confirmed, then start the warehouse search. Safe to repeat. */
+async function resumeCreate(S: Store, id: number, pid: string) {
+  const data = getPlan(S, id).data;
+  if (!data.packingOptionId) {
+    let popts = await listAll(S, `${BASE}/inboundPlans/${pid}/packingOptions`, "packingOptions");
+    const accepted = popts.find((o: any) => o.status === "ACCEPTED");
+    if (accepted) data.packingOptionId = accepted.packingOptionId;
+    else {
+      if (!popts.length) {
+        const g = await call(S, "POST", `${BASE}/inboundPlans/${pid}/packingOptions`);
+        await waitOp(S, g.operationId, "Getting packing options");
+        popts = await listAll(S, `${BASE}/inboundPlans/${pid}/packingOptions`, "packingOptions");
+      }
+      if (!popts.length) throw new ShipError("Amazon offered no packing option for these products.");
+      // Amazon normally offers one; take it (fewest packing groups if several)
+      popts.sort((x: any, y: any) => (x.packingGroups || []).length - (y.packingGroups || []).length);
+      const c = await call(S, "POST", `${BASE}/inboundPlans/${pid}/packingOptions/${popts[0].packingOptionId}/confirmation`);
+      await waitOp(S, c.operationId, "Confirming packing");
+      data.packingOptionId = popts[0].packingOptionId;
+    }
+  }
+  saveData(S, id, data, "targeting");
+  return checkPlacement(S, id);
+}
+
 /** Actions a Warehouse-role user may run (no fees involved). */
 export const WAREHOUSE_ACTIONS = new Set(["boxes_submit", "refresh"]);
 
@@ -360,6 +385,8 @@ export async function step(S: Store, id: number, action: string, args: any) {
 
   switch (action) {
     case "create": {
+      // a plan that failed part-way (already created in Amazon) is resumed, not created again
+      if (plan.status === "creating" && pid) return resumeCreate(S, id, pid);
       need(plan.status === "draft", "This plan was already sent to Amazon.");
       need(plan.items.length, "Add products first.");
       const a = args.address || plan.address;
@@ -383,17 +410,7 @@ export async function step(S: Store, id: number, action: string, args: any) {
       data.itemOwners = Object.fromEntries(items.map((x: any) => [x.msku, { labelOwner: x.labelOwner, prepOwner: x.prepOwner }]));
       saveData(S, id, data);
       await waitOp(S, b.operationId, "Creating the plan");
-      // packing option: Amazon normally offers one; take it (fewest packing groups if several)
-      const g = await call(S, "POST", `${BASE}/inboundPlans/${b.inboundPlanId}/packingOptions`);
-      await waitOp(S, g.operationId, "Getting packing options");
-      const popts = await listAll(S, `${BASE}/inboundPlans/${b.inboundPlanId}/packingOptions`, "packingOptions");
-      need(popts.length, "Amazon offered no packing option for these products.");
-      popts.sort((x: any, y: any) => (x.packingGroups || []).length - (y.packingGroups || []).length);
-      const c = await call(S, "POST", `${BASE}/inboundPlans/${b.inboundPlanId}/packingOptions/${popts[0].packingOptionId}/confirmation`);
-      await waitOp(S, c.operationId, "Confirming packing");
-      data.packingOptionId = popts[0].packingOptionId;
-      saveData(S, id, data, "targeting");
-      return checkPlacement(S, id);
+      return resumeCreate(S, id, b.inboundPlanId);
     }
 
     case "check": {

@@ -1381,7 +1381,7 @@ async function shipPlanPage(el, id) {
         <p class="small muted" style="margin-top:-4px">Amazon sets a fixed rule for many products (shown with a lock) — those are applied automatically so the plan isn't rejected. You can change the others.</p>
         <div id="preptbl"><div class="loading"><span class="spinner"></span> Asking Amazon for each product's prep rules…</div></div></div>
       <div class="card row between"><span class="small muted">Creates the "Send to Amazon" plan and starts looking for <b id="whsum"></b>. Nothing is charged at this step.</span>
-        <button class="primary" id="create">Create in Amazon & find warehouse →</button></div>`;
+        <button class="primary" id="create">${p.inbound_plan_id ? "Continue in Amazon →" : "Create in Amazon & find warehouse →"}</button></div>`;
     const drawWh = () => {
       $("#whsel").innerHTML = wanted.length ? wanted.map((w) => `<span class="chip" style="font-size:13px">${esc(w)}<button type="button" data-rmw="${esc(w)}" title="Remove">×</button></span>`).join("") : `<span class="small bad">Pick at least one warehouse</span>`;
       $("#whknown").innerHTML = known.map((k) => `<button class="sm ${wanted.includes(k.code) ? "primary" : ""}" data-tgw="${esc(k.code)}">${esc(k.code)} <span class="faint">${k.shipments}</span></button>`).join("") || `<span class="small faint">loading…</span>`;

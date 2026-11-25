@@ -758,7 +758,11 @@ export class Store extends DurableObject {
           console.error(`ship plan ${id} step ${b.action} failed: ${e.message}`);
           this.run(`UPDATE ship_plans SET last_error=?, updated_at=? WHERE id=?`, String(e.message).slice(0, 2000), Date.now(), id);
           // a failed create leaves nothing usable in Amazon: go back to draft so it can be fixed and retried
-          if (b.action === "create") this.run(`UPDATE ship_plans SET status='draft', inbound_plan_id=NULL WHERE id=? AND status IN ('creating','draft')`, id);
+          if (b.action === "create") {
+            // nothing was created in Amazon → back to draft to fix and retry; otherwise keep the plan id so "Continue" resumes it
+            const cur = this.one(`SELECT inbound_plan_id FROM ship_plans WHERE id=?`, id);
+            if (!cur?.inbound_plan_id) this.run(`UPDATE ship_plans SET status='draft' WHERE id=?`, id);
+          }
           throw e;
         }
       }
