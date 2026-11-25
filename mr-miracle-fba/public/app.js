@@ -1287,13 +1287,14 @@ PAGES.shipping = async (el, params) => {
   el.innerHTML = header("Shipments", "Every FBA shipment on the account, plus drafts made here", `<span class="small muted" id="synced"></span>${canShip() ? `<button class="primary" id="plan">Plan shipment</button>` : ""}`) + `<div id="body"><div class="loading"><span class="spinner"></span></div></div>`;
   let data = await GET("/ship/list");
   let tab = params.get("tab") || "all", term = "", openRows = new Set(), sel = new Set(), limit = 150;
-  const f = { dest: "", from: "", to: "", by: "", note: "" };
+  const f = { dest: "", from: "", to: "", by: "", note: "", src: "" };
   const fcs = () => [...new Set(data.rows.map((r) => r.destination).filter(Boolean))].sort();
   const users = () => [...new Set(data.rows.map((r) => r.submittedBy).filter(Boolean))].sort();
   const filtered = () => data.rows.filter((r) => (tab === "all" || tabOf(r) === tab)
     && (!term || (r.id + " " + r.name + " " + r.destination + " " + (r.note || "") + " " + r.items.map((x) => `${x.sku} ${x.asin || ""} ${x.fnsku || ""}`).join(" ")).toLowerCase().includes(term))
     && (!f.dest || r.destination === f.dest) && (!f.from || (r.created || "") >= f.from) && (!f.to || (r.created || "") <= f.to)
-    && (!f.by || r.submittedBy === f.by) && (!f.note || (f.note === "with" ? !!r.note : !r.note)));
+    && (!f.by || r.submittedBy === f.by) && (!f.note || (f.note === "with" ? !!r.note : !r.note))
+    && (!f.src || (f.src === "here" ? !!r.planId : !r.planId)));
   const draw = () => {
     $("#synced").textContent = data.syncedAt ? `Synced with Amazon ${ago(data.syncedAt)}` : "Loading shipments from Amazon…";
     const rows = filtered();
@@ -1318,6 +1319,7 @@ PAGES.shipping = async (el, params) => {
           <label class="f">Destination<select data-f="dest"><option value="">All</option>${fcs().map((x) => `<option ${f.dest === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></label>
           <label class="f">Created from<input type="date" data-f="from" value="${f.from}"></label><label class="f">to<input type="date" data-f="to" value="${f.to}"></label>
           <label class="f">Submitted by<select data-f="by"><option value="">Anyone</option>${users().map((x) => `<option ${f.by === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></label>
+          <label class="f">Made in<select data-f="src"><option value="">Anywhere</option><option value="here" ${f.src === "here" ? "selected" : ""}>This system</option><option value="amazon" ${f.src === "amazon" ? "selected" : ""}>Elsewhere (imported from Amazon)</option></select></label>
           <label class="f">Note<select data-f="note"><option value="">Any</option><option value="with" ${f.note === "with" ? "selected" : ""}>With a note</option><option value="without" ${f.note === "without" ? "selected" : ""}>Without</option></select></label>
           <button id="fclear">Clear filters</button></div></div>
       <div class="card flush"><div class="tbl-wrap tall"><table class="t ship-t"><thead><tr>
@@ -1326,9 +1328,9 @@ PAGES.shipping = async (el, params) => {
         ${rows.slice(0, limit).map((r) => {
           const pct = r.units ? Math.round(r.received / r.units * 1000) / 10 : 0;
           const link = r.planId ? `#/shipping?id=${r.planId}` : `#/shipping?fba=${encodeURIComponent(r.id)}`;
-          return `<tr class="${openRows.has(r.id) ? "open" : ""}"><td><input type="checkbox" data-s="${esc(r.id)}" ${sel.has(r.id) ? "checked" : ""}></td>
+          return `<tr class="${openRows.has(r.id) ? "open" : ""} ${r.planId ? "made-here" : ""}"><td><input type="checkbox" data-s="${esc(r.id)}" ${sel.has(r.id) ? "checked" : ""}></td>
             <td><button class="sm" data-x="${esc(r.id)}" title="Show SKUs">${openRows.has(r.id) ? "▾" : "▸"}</button></td>
-            <td><a href="${link}"><b class="mono">${esc(r.kind === "plan" ? (r.name || r.id) : r.id)}</b></a><div class="small faint" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.kind === "plan" ? "Draft · " + (r.created || "") : r.name)}</div></td>
+            <td><a href="${link}"><b class="mono">${esc(r.kind === "plan" ? (r.name || r.id) : r.id)}</b></a>${r.planId ? ` <span class="badge brand" title="Created in the Mr Miracle FBA System">Made here</span>` : ""}<div class="small faint" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.kind === "plan" ? "Draft · " + (r.created || "") : r.name)}</div></td>
             <td class="n">${fmtN(r.skus)}</td><td class="n">${fmtN(r.units)}</td>
             <td class="small">${r.from ? `<span class="faint">${esc(r.from.split(",")[0])} »</span> ` : ""}<b>${esc(r.destination || "—")}</b></td>
             <td><span class="badge ${ST_BADGE[r.status] || ""}">${esc(stLabel(r))}</span></td>
