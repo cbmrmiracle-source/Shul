@@ -1482,7 +1482,11 @@ async function shipPlanPage(el, id) {
     for (const s of shipments) boxList[s.shipmentId] = boxList[s.shipmentId] || [];
     let cur = 0;                      // shipment tab
     const sel = new Set();            // selected box indexes (current shipment)
-    let fmt = (() => { try { return localStorage.getItem("mm-labelfmt") || "letter2"; } catch { return "letter2"; } })();
+    let fmt = (() => { try { const f = localStorage.getItem("mm-labelfmt"); return f === "4x6" ? "4x6" : "6up"; } catch { return "6up"; } })();
+    // 6-per-page sheet geometry (inches); defaults: 4" wide × 3.75" tall labels, 2 across × 3 down
+    const SHEET0 = { w: 4, h: 3.75, top: 0, left: 0.25, gapX: 0, gapY: 0, start: 1 };
+    let sheet = (() => { try { return { ...SHEET0, ...JSON.parse(localStorage.getItem("mm-sheet") || "{}"), start: 1 }; } catch { return { ...SHEET0 }; } })();
+    const asinOf = (s, msku) => (s.items || []).find((x) => x.msku === msku)?.asin || itemInfo[msku]?.asin || itemInfo[msku]?.cur_asin || msku;
     const fnskuOf = (s, msku) => (s.items || []).find((x) => x.msku === msku)?.fnsku || itemInfo[msku]?.fnsku || itemInfo[msku]?.cur_fnsku || "";
     const boxedOf = (s, msku) => boxList[s.shipmentId].reduce((a, b) => a + (b.items.find((x) => x.msku === msku)?.qty || 0), 0);
     const save = debounce(async () => { try { await api("PUT", `/ship/plans/${id}`, { boxList }); } catch (e) { toast("Not saved: " + e.message, true); } }, 600);
@@ -1495,6 +1499,7 @@ async function shipPlanPage(el, id) {
       const L = boxList[s.shipmentId];
       const total = (s.items || []).reduce((a, x) => a + x.quantity, 0), boxedAll = (s.items || []).reduce((a, x) => a + boxedOf(s, x.msku), 0);
       const allBoxed = shipments.every((sh) => (sh.items || []).every((x) => boxedOf(sh, x.msku) === x.quantity));
+      const emptyBox = shipments.some((sh) => boxList[sh.shipmentId].some((b) => !b.items.length));
       const missingDims = shipments.some((sh) => boxList[sh.shipmentId].some((b) => !(b.length > 0 && b.width > 0 && b.height > 0 && b.weight > 0)));
       box.innerHTML = `
         ${shipments.length > 1 ? `<div class="tabs">${shipments.map((sh, i) => `<button data-tab="${i}" class="${i === cur ? "on" : ""}">${esc(sh.warehouse || sh.shipmentId)} · ${esc(sh.confirmationId || "")}</button>`).join("")}</div>` : ""}
@@ -1517,19 +1522,19 @@ async function shipPlanPage(el, id) {
             <div class="row" style="gap:6px"><label class="chk small"><input type="checkbox" id="selall" ${L.length && sel.size === L.length ? "checked" : ""}> All</label>
               <button class="sm" id="newbox">+ Empty box</button><button class="sm" id="bulk" ${sel.size ? "" : "disabled"}>Bulk edit (${sel.size})</button>
               <button class="sm" id="psel" ${sel.size ? "" : "disabled"}>Print selected</button><button class="sm primary" id="pall" ${L.length ? "" : "disabled"}>Print all</button>
-              <select id="fmt" class="sm" title="Label layout"><option value="letter2" ${fmt === "letter2" ? "selected" : ""}>Letter · 2 per page</option><option value="4x6" ${fmt === "4x6" ? "selected" : ""}>4×6 thermal</option></select>
-              <button class="sm danger" id="delsel" ${sel.size ? "" : "disabled"}>Delete</button></div></div>
+              <select id="fmt" class="sm" title="Label layout"><option value="6up" ${fmt === "6up" ? "selected" : ""}>6 per page (${sheet.w}×${sheet.h} in)</option><option value="4x6" ${fmt === "4x6" ? "selected" : ""}>4×6 thermal</option></select><button class="sm" id="sheetset" title="Label sheet size & position">⚙</button>
+              <button class="sm" id="emptysel" ${sel.size ? "" : "disabled"}>Empty</button><button class="sm danger" id="delsel" ${sel.size ? "" : "disabled"}>Delete</button></div></div>
             <div class="bx-boxes">${L.map((b, i) => `<div class="bx-box ${sel.has(i) ? "sel" : ""}">
                 <label class="chk"><input type="checkbox" data-sel="${i}" ${sel.has(i) ? "checked" : ""}></label>
-                <div style="min-width:0;flex:1"><div class="row" style="gap:6px"><b>Box ${i + 1}</b>${b.printed ? `<span class="badge good" title="Printed ${b.printed}×">printed</span>` : ""}
-                  <span class="small">${b.items.map((x) => `<span class="badge" title="${esc(x.msku)}">${esc(fnskuOf(s, x.msku))} × <b>${x.qty}</b></span>`).join(" ") || '<span class="faint">empty</span>'}</span></div>
+                <div style="min-width:0;flex:1"><div class="row" style="gap:6px"><b>Box ${i + 1}</b>${b.reprint ? `<span class="badge warn" title="Number or contents changed since printing">reprint</span>` : b.printed ? `<span class="badge good" title="Printed ${b.printed}×">printed</span>` : ""}${!b.items.length ? `<span class="badge bad">empty</span>` : ""}
+                  <span class="small">${b.items.map((x) => `<span class="badge" title="${esc(x.msku)} · FNSKU ${esc(fnskuOf(s, x.msku))}">${esc(asinOf(s, x.msku))} × <b>${x.qty}</b></span>`).join(" ") || '<span class="faint">no contents — add from a product</span>'}</span></div>
                   <div class="row small" style="gap:4px;margin-top:6px">Weight <input class="w-num bxn" data-b="${i}" data-k="weight" value="${b.weight ?? ""}" placeholder="lb">
                     &nbsp;Dims <input class="w-num bxn" data-b="${i}" data-k="length" value="${b.length ?? ""}" placeholder="L">×<input class="w-num bxn" data-b="${i}" data-k="width" value="${b.width ?? ""}" placeholder="W">×<input class="w-num bxn" data-b="${i}" data-k="height" value="${b.height ?? ""}" placeholder="H"> in</div></div>
-                <div class="row" style="gap:4px"><button class="sm" data-edit="${i}">Contents</button><button class="sm" data-print="${i}">Print</button><button class="sm danger" data-del="${i}" title="Delete box">×</button></div></div>`).join("") || `<div class="empty">No boxes yet — use <b>+ Boxes</b> next to a product.</div>`}</div></div>
+                <div class="row" style="gap:4px"><button class="sm" data-edit="${i}">Contents</button><button class="sm" data-print="${i}">Print</button><button class="sm" data-empty="${i}" title="Remove the contents but keep box ${i + 1} (no renumbering)">Empty</button><button class="sm danger" data-del="${i}" title="Delete box — boxes after it are renumbered">×</button></div></div>`).join("") || `<div class="empty">No boxes yet — use <b>+ Boxes</b> next to a product.</div>`}</div></div>
         </div>
         <div class="card row between" style="position:sticky;bottom:8px;z-index:5">
-          <span class="small muted">${allBoxed ? (missingDims ? "Enter weight and dimensions for every box, then submit." : "All units boxed. Submit when the boxes are packed and labeled.") : "Box every unit (all shipments) before submitting."} Box numbers on the labels match what's submitted to Amazon.</span>
-          <button class="primary" id="submit" ${allBoxed && !missingDims ? "" : "disabled"}>Submit box content to Amazon →</button></div>`;
+          <span class="small muted">${allBoxed ? (emptyBox ? "Some boxes are empty — fill them or delete them before submitting." : missingDims ? "Enter weight and dimensions for every box, then submit." : "All units boxed. Submit when the boxes are packed and labeled.") : "Box every unit (all shipments) before submitting."} Box numbers on the labels match what's submitted to Amazon.</span>
+          <button class="primary" id="submit" ${allBoxed && !missingDims && !emptyBox ? "" : "disabled"}>Submit box content to Amazon →</button></div>`;
 
       // ---- events ----
       $$("[data-tab]").forEach((b) => b.onclick = () => { cur = Number(b.dataset.tab); sel.clear(); draw(); });
@@ -1553,14 +1558,14 @@ async function shipPlanPage(el, id) {
       $$(".bxn").forEach((inp) => inp.onchange = () => { const v = inp.value === "" ? null : Number(inp.value); L[inp.dataset.b][inp.dataset.k] = v; save(); });
       $$("[data-edit]").forEach((b) => b.onclick = () => editContents(s, Number(b.dataset.edit)));
       $$("[data-print]").forEach((b) => b.onclick = () => printLabels(s, [Number(b.dataset.print)]));
-      $$("[data-del]").forEach((b) => b.onclick = () => { L.splice(Number(b.dataset.del), 1); sel.clear(); changed(); });
+      $$("[data-empty]").forEach((b) => b.onclick = () => emptyBoxes(s, [Number(b.dataset.empty)]));
+      $$("[data-del]").forEach((b) => b.onclick = () => deleteBoxes(s, [Number(b.dataset.del)]));
       $("#psel").onclick = () => printLabels(s, [...sel].sort((a, b) => a - b));
       $("#pall").onclick = () => printLabels(s, L.map((_, i) => i));
       $("#fmt").onchange = () => { fmt = $("#fmt").value; try { localStorage.setItem("mm-labelfmt", fmt); } catch {} };
-      $("#delsel").onclick = async () => {
-        if (!await confirmBox(`Delete ${sel.size} boxes?`, "Boxes after them are renumbered — reprint their labels.", "Delete")) return;
-        const keep = L.filter((_, i) => !sel.has(i)); L.length = 0; L.push(...keep); sel.clear(); changed();
-      };
+      $("#sheetset").onclick = sheetSettings;
+      $("#emptysel").onclick = () => emptyBoxes(s, [...sel]);
+      $("#delsel").onclick = () => deleteBoxes(s, [...sel]);
       $("#bulk").onclick = () => {
         const m = modal(`<h2>Edit ${sel.size} boxes</h2><p class="small muted">Leave a field empty to keep each box's current value.</p><div class="form-grid">
           ${[["weight", "Weight (lb)"], ["length", "Length (in)"], ["width", "Width (in)"], ["height", "Height (in)"]].map(([k, l]) => `<label class="f">${l}<input type="number" step="0.1" data-bk="${k}"></label>`).join("")}</div>
@@ -1607,8 +1612,59 @@ async function shipPlanPage(el, id) {
           return `<tr><td class="small">${esc(it.msku)}</td><td class="mono small">${esc(fnskuOf(s, it.msku))}</td><td class="n">${fmtN(left)}</td><td class="n"><input class="w-num" type="number" min="0" max="${left}" data-c="${esc(it.msku)}" value="${inBox || ""}"></td></tr>`; }).join("")}
         </tbody></table></div><div class="foot"><button data-close>Cancel</button><button class="primary" id="ec-ok">Save</button></div>`, true);
       $("#ec-ok", m.el).onclick = () => {
+        const before = JSON.stringify(b.items);
         b.items = $$("[data-c]", m.el).map((i) => ({ msku: i.dataset.c, qty: Math.round(Number(i.value) || 0) })).filter((x) => x.qty > 0);
+        if (b.printed && JSON.stringify(b.items) !== before) b.reprint = true;
         m.close(); changed();
+      };
+    };
+
+    const emptyBoxes = async (s, idxs) => {
+      const L = boxList[s.shipmentId];
+      if (!idxs.length) return;
+      if (!await confirmBox(`Empty ${idxs.length === 1 ? "box " + (idxs[0] + 1) : idxs.length + " boxes"}?`,
+        `<p>The contents go back to "left to box". The box number${idxs.length === 1 ? "" : "s"} stay${idxs.length === 1 ? "s" : ""} the same, so no other labels change — refill with <b>Contents</b> and reprint just ${idxs.length === 1 ? "this one" : "these"}.</p>`, "Empty")) return;
+      for (const i of idxs) { L[i].items = []; if (L[i].printed) L[i].reprint = true; }
+      sel.clear(); changed();
+    };
+    const deleteBoxes = async (s, idxs) => {
+      const L = boxList[s.shipmentId];
+      if (!idxs.length) return;
+      idxs = [...idxs].sort((a, b) => a - b);
+      const first = idxs[0], lastAfter = L.length - 1;
+      const shifted = L.slice(first + 1).filter((_, k) => !idxs.includes(first + 1 + k));
+      const printedShifted = shifted.filter((b) => b.printed).length;
+      const html = shifted.length
+        ? `<div class="banner warn"><div class="txt"><b>Renumbering warning.</b> Deleting ${idxs.length === 1 ? `box ${first + 1}` : `boxes ${idxs.map((i) => i + 1).join(", ")}`} moves every box after it up: box ${first + 2} becomes box ${first + 1}, and so on through box ${lastAfter + 1}.
+            ${printedShifted ? `<b>${printedShifted} already-printed label${printedShifted === 1 ? "" : "s"} would be wrong</b> and must be reprinted.` : ""}</div></div>
+           <p>To avoid reprinting, use <b>Empty</b> instead — it keeps the box number and you can refill it.</p>`
+        : `<p>This is the last box, so no other box numbers change.</p>`;
+      const choice = await new Promise((res) => {
+        const m = modal(`<h2>Delete ${idxs.length === 1 ? "box " + (first + 1) : idxs.length + " boxes"}?</h2>${html}
+          <div class="foot"><button data-close>Cancel</button>${shifted.length ? `<button id="d-empty">Empty instead</button>` : ""}<button class="primary danger" id="d-del">Delete${shifted.length ? " & renumber" : ""}</button></div>`);
+        $("#d-del", m.el).onclick = () => { m.close(); res("delete"); };
+        if ($("#d-empty", m.el)) $("#d-empty", m.el).onclick = () => { m.close(); res("empty"); };
+        $$("[data-close]", m.el).forEach((b) => b.addEventListener("click", () => res(null)));
+      });
+      if (choice === "empty") { for (const i of idxs) { L[i].items = []; if (L[i].printed) L[i].reprint = true; } }
+      else if (choice === "delete") {
+        const keep = L.filter((_, i) => !idxs.includes(i));
+        keep.forEach((b, i) => { if (i >= first && b.printed) b.reprint = true; });
+        L.length = 0; L.push(...keep);
+      } else return;
+      sel.clear(); changed();
+    };
+    const sheetSettings = () => {
+      const F = [["w", "Label width (in)"], ["h", "Label height (in)"], ["top", "Top margin (in)"], ["left", "Left margin (in)"], ["gapX", "Gap between columns (in)"], ["gapY", "Gap between rows (in)"], ["start", "Start at label # (1–6, to reuse a part-used sheet)"]];
+      const m = modal(`<h2>6-per-page label sheet</h2><p class="small muted">2 labels across × 3 down on US Letter. Match these to your label sheets. A Letter page is 8.5 × 11 in, so 3 rows × height + gaps + top margin must fit in 11 in${sheet.h * 3 + sheet.gapY * 2 + sheet.top > 11 ? ` — <b class="bad">your current settings need ${(sheet.h * 3 + sheet.gapY * 2 + sheet.top).toFixed(2)} in</b>` : ""}.</p>
+        <div class="form-grid">${F.map(([k, l]) => `<label class="f">${l}<input type="number" step="0.01" data-sh="${k}" value="${sheet[k]}"></label>`).join("")}</div>
+        <div class="foot"><button id="sh-reset">Reset</button><button data-close>Cancel</button><button class="primary" id="sh-ok">Save</button></div>`);
+      $("#sh-reset", m.el).onclick = () => { $$("[data-sh]", m.el).forEach((i) => { i.value = SHEET0[i.dataset.sh]; }); };
+      $("#sh-ok", m.el).onclick = () => {
+        $$("[data-sh]", m.el).forEach((i) => { sheet[i.dataset.sh] = Number(i.value) || 0; });
+        sheet.start = Math.min(6, Math.max(1, Math.round(sheet.start || 1)));
+        try { const { start, ...keep } = sheet; localStorage.setItem("mm-sheet", JSON.stringify(keep)); } catch {}
+        m.close(); draw();
       };
     };
 
@@ -1625,7 +1681,7 @@ async function shipPlanPage(el, id) {
         const contents = b.items.length === 1
           ? `${(itemInfo[b.items[0].msku]?.title || b.items[0].msku).slice(0, 60)} - [${fnskuOf(s, b.items[0].msku)}] - ${b.items[0].qty}`
           : `Mixed SKUs (${b.items.length}) - ${b.items.reduce((a, x) => a + x.qty, 0)} units`;
-        return { n, of: L.length, twoD, boxId: `${s.confirmationId}U${String(n).padStart(6, "0")}`, contents, mixed: b.items.length > 1 ? b.items.map((x) => `${fnskuOf(s, x.msku)} × ${x.qty}`) : [] };
+        return { n, of: L.length, twoD, boxId: `${s.confirmationId}U${String(n).padStart(6, "0")}`, contents, mixed: b.items.length > 1 ? b.items.map((x) => `${asinOf(s, x.msku)} [${fnskuOf(s, x.msku)}] × ${x.qty}`) : [] };
       });
       const w = window.open("", "_blank");
       if (!w) return toast("Allow pop-ups for this site to print labels.", true);
@@ -1634,29 +1690,45 @@ async function shipPlanPage(el, id) {
       try { bw = await loadBarcodes(); } catch (e) { w.close(); return toast("Couldn't load the barcode generator — check your connection.", true); }
       const svg = (opts, style) => { try { return bw.toSVG(opts).replace("<svg ", `<svg style="${style}" preserveAspectRatio="none" `); } catch (e) { return `<p style="color:red">Barcode error: ${esc(e.message || e)}</p>`; } };
       w.document.open();
-      const page = fmt === "4x6" ? "@page{size:4in 6in;margin:0}.lab{width:4in;height:6in;page-break-after:always}" : "@page{size:letter;margin:0.25in}.lab{width:4in;height:5.1in;margin:0 auto 0.3in}.lab:nth-child(2n){page-break-after:always}";
+      const six = fmt !== "4x6";
+      const W = six ? sheet.w : 4, H = six ? sheet.h : 6;
+      // compact layout for the smaller 6-up label
+      const k = six ? Math.min(1, H / 5.2) : 1;
+      const page = six
+        ? `@page{size:8.5in 11in;margin:0}.sheet{display:grid;grid-template-columns:repeat(2,${W}in);grid-auto-rows:${H}in;column-gap:${sheet.gapX}in;row-gap:${sheet.gapY}in;padding:${sheet.top}in 0 0 ${sheet.left}in;page-break-after:always;box-sizing:border-box;width:8.5in;height:11in;overflow:hidden}.lab{width:${W}in;height:${H}in}`
+        : "@page{size:4in 6in;margin:0}.lab{width:4in;height:6in;page-break-after:always}";
+      const pdfH = (six ? Math.max(0.6, H * 0.24) : 1.15).toFixed(2), c128H = (six ? Math.max(0.35, H * 0.12) : 0.7).toFixed(2), bcW = (W - 0.5).toFixed(2);
       w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Box labels ${esc(s.confirmationId)}</title>
-        <style>${page}body{margin:0;font-family:Arial,Helvetica,sans-serif}.lab{box-sizing:border-box;padding:0.15in;border:1px dashed #ccc;overflow:hidden;display:flex;flex-direction:column}
+        <style>${page}body{margin:0;font-family:Arial,Helvetica,sans-serif;font-size:${Math.round(100 * k)}%}.lab{box-sizing:border-box;padding:${six ? 0.1 : 0.15}in;overflow:hidden;display:flex;flex-direction:column}.blank{visibility:hidden}
         .c{text-align:center}.tiny{font:9px 'Courier New',monospace}.bar{background:#000;color:#fff;font-weight:bold;padding:2px 6px;display:flex;justify-content:space-between;font-size:13px}
         .two{display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:10.5px;margin:4px 0;border-top:2px solid #000;padding-top:3px}.two b.big{font-size:20px}
         .hd{display:flex;justify-content:space-between;align-items:center;border-top:2px solid #000;margin-top:2px}.hd .fba{font:bold 18px 'Courier New',monospace}
         .ct{font:10px 'Courier New',monospace;border-top:2px solid #000;padding-top:3px;margin-top:auto}svg{display:block;margin:0 auto}
-        @media screen{body{background:#eee}.lab{background:#fff;margin:12px auto}}</style>
+        ${six ? ".two{font-size:9px;margin:2px 0}.two b.big{font-size:15px}.bar{font-size:11px;padding:1px 5px}.hd .fba{font-size:14px}.ct{font-size:8.5px}" : ""}
+        @media screen{body{background:#eee}.sheet,.lab{background:#fff;margin:12px auto;outline:1px dashed #bbb}.sheet .lab{margin:0;outline:1px dotted #ccc}}</style>
         </head><body>
-        ${labels.map((l) => `<div class="lab">
-          <div class="c">${svg({ bcid: "pdf417", text: l.twoD, columns: 6, scale: 2, padding: 2 }, "width:3.3in;height:1.15in")}</div><div class="tiny c">${esc(l.twoD.length > 70 ? l.twoD.slice(0, 70) + "…" : l.twoD)}</div>
+        ${(() => {
+          const one = (l) => `<div class="lab">
+          <div class="c">${svg({ bcid: "pdf417", text: l.twoD, columns: 6, scale: 2, padding: 2 }, `width:${bcW}in;height:${pdfH}in`)}</div><div class="tiny c">${esc(l.twoD.length > 70 ? l.twoD.slice(0, 70) + "…" : l.twoD)}</div>
           <div class="c" style="font-size:9px;font-weight:bold;letter-spacing:.5px">PLEASE LEAVE THIS LABEL UNCOVERED</div>
           <div class="hd"><span class="fba">FBA</span><span class="bar" style="flex:1;margin-left:8px"><span>BOX ${l.n} OF ${l.of}</span><span>${esc(s.warehouse || "")}</span></span></div>
           <div class="two"><div>SHIP FROM:<br><b>${esc(from.name || "")}</b><br>${esc(from.addressLine1 || "")}${from.addressLine2 ? " " + esc(from.addressLine2) : ""}<br>${esc(from.city || "")} ${esc(from.stateOrProvinceCode || "")} ${esc(from.postalCode || "")} ${esc(from.countryCode || "")}</div>
             <div>SHIP TO:<br><b class="big">${esc(s.warehouse || to.name || "")}</b><br>${esc(to.addressLine1 || "")}${to.addressLine2 ? " " + esc(to.addressLine2) : ""}<br>${esc(to.city || "")} ${esc(to.stateOrProvinceCode || "")} ${esc(to.postalCode || "")}</div></div>
           <div class="bar"><span>${esc(s.name || p.name)}</span></div>
           <div class="c" style="font-size:9px;font-weight:bold;margin-top:4px">Purchase Order / Shipment ID</div>
-          <div class="c">${svg({ bcid: "code128", text: l.boxId, height: 14, scale: 2 }, "width:3.2in;height:0.7in")}</div><div class="c" style="font:bold 13px Arial">${esc(l.boxId)}</div>
-          <div class="ct">${esc(l.contents)}${l.mixed.length ? `<br>${l.mixed.map(esc).join(" · ")}` : ""}</div></div>`).join("")}
+          <div class="c">${svg({ bcid: "code128", text: l.boxId, height: 14, scale: 2 }, `width:${bcW}in;height:${c128H}in`)}</div><div class="c" style="font:bold ${six ? 11 : 13}px Arial">${esc(l.boxId)}</div>
+          <div class="ct">${esc(l.contents)}${l.mixed.length ? `<br>${l.mixed.map(esc).join(" · ")}` : ""}</div></div>`;
+          if (!six) return labels.map(one).join("");
+          const cells = [...Array(sheet.start - 1).fill(null), ...labels];
+          let out = "";
+          for (let i = 0; i < cells.length; i += 6) out += `<div class="sheet">${cells.slice(i, i + 6).map((l) => l ? one(l) : `<div class="lab blank"></div>`).join("")}</div>`;
+          return out;
+        })()}
         </body></html>`);
       w.document.close();
       setTimeout(() => { try { w.focus(); w.print(); } catch { /* user can print manually */ } }, 400);
-      for (const i of idxs) L[i].printed = (L[i].printed || 0) + 1;
+      for (const i of idxs) { L[i].printed = (L[i].printed || 0) + 1; L[i].reprint = false; }
+      sheet.start = 1;
       save(); draw();
     };
     draw();
