@@ -8,6 +8,7 @@ import { DEFAULT_RULES, REASON_MANUAL, REASON_REPRICE, REASON_SELLERS, enqueueOf
 import { DEFAULT_FEE_EMAIL, buildFeeEmail, diffFees, feeChanges, maybeSendFeeEmail } from "./fees";
 import { DEFAULT_INV_SETTINGS, compareRanges, inventoryRows, priceAnalysis, productMeta, resolveSkus, salesGrid, salesReport } from "./analysis";
 import { currentImages, processImageJobs, queueImageJob, storeUpload } from "./images";
+import { fetchItems, importShipment, linkPlans, shipmentList, syncShipments } from "./shipments";
 import { DEFAULT_TARGET, ShipError, WAREHOUSE_ACTIONS, createDraft, defaultAddress, getPlan, knownWarehouses, normTarget, ownersFor, parseLines, recentAddresses, runTargeting, setItems, shipmentLabels, step as shipStep, unitLabels } from "./shipping";
 import { SALES_TZ, addDays, esc, hashPassword, num, parseCsv, randomToken, round2, safeEqual, today } from "./util";
 
@@ -229,6 +230,7 @@ export class Store extends DurableObject {
       return `${asins.length} ASINs queued`;
     }, 0.97);
 
+    await this.task("fba_shipments", 2 * HOUR, async () => (await syncShipments(this)) ? "synced" : false, 0.9);
     await this.task("ship_target", 5 * MIN, async () => { await runTargeting(this); return ""; }, 0.97);
     try { await processOfferBatch(this); } catch (e: any) { if (!(e instanceof RateLimited)) this.log("offers", e.message); }
     await processPriceQueue(this);
@@ -382,7 +384,7 @@ export class Store extends DurableObject {
     if (write && me.role === "viewer") throw new HttpError(403, "View-only account.");
     if (me.role === "warehouse") {
       const okRead = /^\/api\/(products|inventory|inv-errors|ship\/|labels\/)/.test(path);
-      const okWrite = /^\/api\/ship\/(plans(\/\d+(\/items)?)?|parse)$/.test(path) || /^\/api\/ship\/plans\/\d+\/step$/.test(path);
+      const okWrite = /^\/api\/ship\/(plans(\/\d+(\/items)?)?|parse|import|sync|fba\/[A-Z0-9]+)$/.test(path) || /^\/api\/ship\/plans\/\d+\/step$/.test(path);
       if (!write && !okRead) throw new HttpError(403, "Warehouse accounts can use Inventory and Shipping only.");
       if (write && !okWrite) throw new HttpError(403, "Warehouse accounts can't change this.");
       if (write && /\/step$/.test(path)) {
@@ -418,6 +420,23 @@ export class Store extends DurableObject {
       }
       this.audit(who, "products.update", items.length + " items");
       return { ok: true, updated: items.length };
+    }
+    if (path === "/api/products/import-sku" && method === "POST") {
+      const b = await body();
+      const sku = String(b.sku || "").trim();
+      if (!sku) throw new HttpError(400, "Enter a SKU.");
+      let l: any;
+      try { l = await this.amz.getListing(sku, "summaries,attributes"); } catch (e: any) { throw new HttpError(400, `Amazon doesn't have SKU "${sku}" on this account (${e.message}).`); }
+      const sm = l.summaries?.[0] || {};
+      const price = l.attributes?.purchasable_offer?.[0]?.our_price?.[0]?.schedule?.[0]?.value_with_tax ?? null;
+      const fba = (l.attributes?.fulfillment_availability || []).some((x: any) => /AMAZON/i.test(x.fulfillment_channel_code || "")) ? "FBA" : "FBM";
+      this.run(`INSERT INTO products (sku, asin, title, price, status, fulfillment, product_type, mrm_auto, first_seen, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(sku) DO UPDATE SET asin=excluded.asin, title=excluded.title, price=COALESCE(excluded.price, products.price),
+                  status=excluded.status, fulfillment=excluded.fulfillment, product_type=excluded.product_type`,
+        sku, sm.asin || null, sm.itemName || "", price, (sm.status || []).join(" ") || "", fba, sm.productType || null, /mr\.?\s*miracle/i.test(sm.itemName || "") ? 1 : 0, Date.now(), Date.now());
+      this.run(`UPDATE products SET catalog_at=NULL WHERE sku=?`, sku);
+      this.audit(who, "products.import-sku", sku);
+      return { ok: true, product: this.one(`SELECT sku, asin, title, price, fulfillment FROM products WHERE sku=?`, sku) };
     }
     if (path === "/api/products/cogs" && method === "POST") {
       const b = await body();
@@ -710,6 +729,44 @@ export class Store extends DurableObject {
       return { ok: true, id };
     }
     if (path === "/api/ship/address") return (await defaultAddress(this)) || {};
+    if (path === "/api/ship/list") return shipmentList(this);
+    if (path === "/api/ship/import" && method === "POST") {
+      const b = await body();
+      try { const r = await importShipment(this, b.shipmentId); this.audit(who, "ship.import", r.shipment_id); return { ok: true, shipment: r }; }
+      catch (e: any) { throw new HttpError(400, e.message); }
+    }
+    if (path === "/api/ship/sync" && method === "POST") {
+      const b = await body();
+      if (b.full) this.setSetting("fba_ship_sync", null);
+      this.run(`DELETE FROM jobs_state WHERE name='fba_shipments'`);
+      await this.ensureAlarm(500);
+      return { ok: true };
+    }
+    if (path === "/api/ship/costs" && method === "POST") {
+      const b = await body();
+      const cost = b.cost === "" || b.cost === null ? null : Number(b.cost);
+      for (const sid of b.ids || []) {
+        if (String(sid).startsWith("PLAN-")) {
+          const pl = getPlan(this, Number(String(sid).slice(5))); pl.data.shippingPrice = cost;
+          this.run(`UPDATE ship_plans SET data=? WHERE id=?`, JSON.stringify(pl.data), pl.id);
+        } else this.run(`UPDATE fba_shipments SET shipping_cost=? WHERE shipment_id=?`, cost, sid);
+      }
+      this.audit(who, "ship.costs", b);
+      return { ok: true };
+    }
+    const fm = path.match(/^\/api\/ship\/fba\/([A-Z0-9]+)$/);
+    if (fm && method === "GET") {
+      const row = this.one(`SELECT * FROM fba_shipments WHERE shipment_id=?`, fm[1]);
+      if (!row) throw new HttpError(404, "Shipment not found — import it first.");
+      if (!["CLOSED", "CANCELLED", "DELETED"].includes(row.status) || !row.items_json) { try { await fetchItems(this, fm[1]); } catch { /* keep cached */ } }
+      return shipmentList(this).rows.find((r: any) => r.id === fm[1]);
+    }
+    if (fm && method === "PUT") {
+      const b = await body();
+      if (b.note !== undefined) this.run(`UPDATE fba_shipments SET note=? WHERE shipment_id=?`, String(b.note).slice(0, 2000), fm[1]);
+      if (b.shippingCost !== undefined) this.run(`UPDATE fba_shipments SET shipping_cost=? WHERE shipment_id=?`, b.shippingCost === "" || b.shippingCost === null ? null : Number(b.shippingCost), fm[1]);
+      return { ok: true };
+    }
     if (path === "/api/ship/defaults") {
       return { address: (await defaultAddress(this)) || null, contact: this.setting("freight_contact", null), target: normTarget({ ...DEFAULT_TARGET, ...this.setting("ship_target", {}) }),
         prepDefault: this.setting("prep_default", "NONE"), recentAddresses: await recentAddresses(this), warehouses: await knownWarehouses(this) };

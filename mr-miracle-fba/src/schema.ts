@@ -51,6 +51,9 @@ CREATE TABLE IF NOT EXISTS inv_errors (id INTEGER PRIMARY KEY AUTOINCREMENT, sku
   created_by TEXT, created_at INTEGER);
 CREATE TABLE IF NOT EXISTS ship_plans (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, status TEXT, inbound_plan_id TEXT, address TEXT,
   data TEXT, last_error TEXT, created_by TEXT, created_at INTEGER, updated_at INTEGER);
+CREATE TABLE IF NOT EXISTS fba_shipments (shipment_id TEXT PRIMARY KEY, name TEXT, status TEXT, dest_fc TEXT, ship_from TEXT, label_prep TEXT,
+  box_source TEXT, created_day TEXT, first_seen INTEGER, updated_at INTEGER, items_json TEXT, sku_count INTEGER, units INTEGER, received INTEGER,
+  items_at INTEGER, plan_id INTEGER, submitted_by TEXT, note TEXT, shipping_cost REAL);
 CREATE TABLE IF NOT EXISTS box_specs (sku TEXT PRIMARY KEY, units_per_box INTEGER, length REAL, width REAL, height REAL, weight REAL, updated_at INTEGER);
 CREATE TABLE IF NOT EXISTS ship_items (plan_id INTEGER, sku TEXT, asin TEXT, fnsku TEXT, qty INTEGER, PRIMARY KEY (plan_id, sku));
 CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, area TEXT, msg TEXT);

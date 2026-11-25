@@ -244,3 +244,9 @@ select.sm { padding: 4px 6px; font-size: 12px; }
 .sm-tbl { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; row-gap: 3px; align-content: start; }
 .sm-tbl > span { color: var(--muted); font-size: 12px; }
 .sm-tbl > b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.dd-wrap { position: relative; }
+.dd-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.15); min-width: 300px; padding: 4px; }
+.dd-menu button { display: block; width: 100%; text-align: left; border: 0; border-radius: 6px; background: none; padding: 8px 10px; }
+.dd-menu button:hover:not(:disabled) { background: var(--panel-2); }
+table.ship-t tr.sub > td { background: var(--panel-2); padding: 4px 10px 12px; }
+table.ship-t tr.open > td { border-bottom: 0; }

@@ -580,6 +580,8 @@ export async function step(S: Store, id: number, action: string, args: any) {
         } catch { /* keep old */ }
       }
       saveData(S, id, data);
+      const ids = (data.shipments || []).map((s: any) => s.confirmationId).filter(Boolean);
+      if (ids.length && /^(Shipment |Send list )/.test(plan.name)) S.run(`UPDATE ship_plans SET name=? WHERE id=?`, ids.join(" + "), id);
       return getPlan(S, id);
     }
 
