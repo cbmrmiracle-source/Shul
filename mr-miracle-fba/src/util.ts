@@ -120,16 +120,19 @@ export async function streamTsv(res: Response, gzip: boolean, onRow: (row: Recor
 }
 
 /** Minimal CSV parser (handles quotes). */
-export function parseCsv(text: string): string[][] {
+export function parseCsv(text: string, delimiter?: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [], cell = "", q = false;
+  // one delimiter per file, detected from the first line (a stray tab inside a CSV cell must not split it)
+  const first = text.slice(0, text.search(/\r?\n|$/));
+  const delim = delimiter || (first.includes("\t") && !first.includes(",") ? "\t" : first.includes(",") ? "," : "\t");
   for (let i = 0; i < text.length; i++) {
     const c = text[i];
     if (q) {
       if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
       else cell += c;
     } else if (c === '"') q = true;
-    else if (c === "," || c === "\t") { row.push(cell); cell = ""; }
+    else if (c === delim) { row.push(cell); cell = ""; }
     else if (c === "\n" || c === "\r") {
       if (c === "\r" && text[i + 1] === "\n") i++;
       row.push(cell); cell = "";

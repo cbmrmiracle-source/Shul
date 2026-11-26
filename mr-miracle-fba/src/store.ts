@@ -8,6 +8,8 @@ import { DEFAULT_RULES, REASON_MANUAL, REASON_REPRICE, REASON_SELLERS, enqueueOf
 import { DEFAULT_FEE_EMAIL, buildFeeEmail, diffFees, feeChanges, maybeSendFeeEmail } from "./fees";
 import { DEFAULT_INV_SETTINGS, compareRanges, inventoryRows, priceAnalysis, productMeta, resolveSkus, salesGrid, salesReport } from "./analysis";
 import { currentImages, processImageJobs, queueImageJob, storeUpload } from "./images";
+import { invRoutes } from "./inventory_routes";
+import { InvError } from "./inventory";
 import { fetchItems, importShipment, linkPlans, shipmentList, syncShipments } from "./shipments";
 import { DEFAULT_TARGET, ShipError, WAREHOUSE_ACTIONS, createDraft, defaultAddress, getPlan, knownWarehouses, normTarget, ownersFor, parseLines, recentAddresses, runTargeting, setItems, shipmentLabels, step as shipStep, unitLabels } from "./shipping";
 import { SALES_TZ, addDays, esc, hashPassword, num, parseCsv, randomToken, round2, safeEqual, today } from "./util";
@@ -304,7 +306,7 @@ export class Store extends DurableObject {
       if (/rows written|exceeded allowed/i.test(String(e?.message))) {
         return Response.json({ error: "Cloudflare's free daily storage limit is used up, so changes can't be saved until midnight UTC. Viewing still works. (Upgrading to Workers Paid removes this limit.)" }, { status: 503 });
       }
-      const status = e instanceof HttpError ? e.status : e instanceof ShipError ? 400 : 500;
+      const status = e instanceof HttpError ? e.status : e instanceof ShipError || e instanceof InvError ? 400 : 500;
       if (status === 500) this.log("api", `${request.method} ${url.pathname}: ${e.stack || e.message}`);
       return Response.json({ error: e.message || String(e) }, { status });
     }
@@ -383,8 +385,9 @@ export class Store extends DurableObject {
     const write = method !== "GET";
     if (write && me.role === "viewer") throw new HttpError(403, "View-only account.");
     if (me.role === "warehouse") {
-      const okRead = /^\/api\/(products|inventory|inv-errors|ship\/|labels\/)/.test(path);
-      const okWrite = /^\/api\/ship\/(plans(\/\d+(\/items)?)?|parse|import|sync|fba\/[A-Z0-9]+)$/.test(path) || /^\/api\/ship\/plans\/\d+\/step$/.test(path);
+      const okRead = /^\/api\/(products|inventory|inv-errors|ship\/|labels\/|inv\/|purch\/)/.test(path);
+      const okWrite = /^\/api\/ship\/(plans(\/\d+(\/items)?)?|parse|import|sync|fba\/[A-Z0-9]+)$/.test(path) || /^\/api\/ship\/plans\/\d+\/step$/.test(path)
+        || /^\/api\/inv\/(adjust|transfer)$/.test(path) || /^\/api\/purch\/pos\/\d+\/(receive|attach)$/.test(path) || /^\/api\/ship\/deduct(\/preview|\/undo)?$/.test(path);
       if (!write && !okRead) throw new HttpError(403, "Warehouse accounts can use Inventory and Shipping only.");
       if (write && !okWrite) throw new HttpError(403, "Warehouse accounts can't change this.");
       if (write && /\/step$/.test(path)) {
@@ -905,6 +908,9 @@ export class Store extends DurableObject {
       return { ok: true };
     }
     if (path === "/api/audit") { admin(); return this.all(`SELECT * FROM audit ORDER BY id DESC LIMIT 300`); }
+
+    const inv = await invRoutes(this, request, path, method, q, body, who);
+    if (inv !== undefined) return inv;
 
     throw new HttpError(404, "Not found");
   }

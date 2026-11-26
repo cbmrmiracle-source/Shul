@@ -119,6 +119,7 @@ export function shipmentList(S: Store) {
   const plans = S.all(`SELECT id, name, status, inbound_plan_id, created_by, created_at, updated_at, data FROM ship_plans ORDER BY id DESC`);
   const planById = new Map(plans.map((p) => [p.id, { ...p, data: JSON.parse(p.data || "{}") }]));
   const rows: any[] = [];
+  const deducted = new Map<string, any>(S.all(`SELECT d.ref, d.at, d.units, d.value, w.name warehouse FROM ship_deductions d LEFT JOIN warehouses w ON w.id=d.warehouse_id`).map((x) => [x.ref, x]));
   for (const s of S.all(`SELECT * FROM fba_shipments ORDER BY COALESCE(created_day, '') DESC, updated_at DESC`)) {
     const items = JSON.parse(s.items_json || "[]").map((x: any) => ({ ...x, asin: prods.get(x.sku)?.asin || null, title: prods.get(x.sku)?.title || "", price: prods.get(x.sku)?.price || null }));
     const plan = s.plan_id ? planById.get(s.plan_id) : null;
@@ -132,6 +133,7 @@ export function shipmentList(S: Store) {
       planId: s.plan_id || null, submittedBy: s.submitted_by || plan?.created_by || "", note: s.note || "", shippingCost: s.shipping_cost,
       created: s.created_day || (s.first_seen ? new Date(s.first_seen).toISOString().slice(0, 10) : null), updatedAt: s.updated_at,
       value: items.reduce((a: number, x: any) => a + (x.price || 0) * x.shipped, 0), boxSource: s.box_source, labelPrep: s.label_prep, items,
+      deducted: deducted.get(s.plan_id ? `PLAN-${s.plan_id}` : s.shipment_id) || null,
     });
   }
   // plans that don't have an Amazon shipment yet (drafts, looking for warehouse, …)
@@ -145,6 +147,7 @@ export function shipmentList(S: Store) {
       from: "", skus: items.length, units: items.reduce((a: number, x: any) => a + x.shipped, 0), received: 0, boxes: null, boxed: null, planId: p.id,
       submittedBy: p.created_by || "", note: p.data.note || "", shippingCost: p.data.shippingPrice ?? null, created: new Date(p.created_at).toISOString().slice(0, 10),
       updatedAt: p.updated_at, value: items.reduce((a: number, x: any) => a + (prods.get(x.sku)?.price || 0) * x.shipped, 0), items,
+      deducted: deducted.get(`PLAN-${p.id}`) || null,
     });
   }
   rows.sort((a, b) => (b.created || "").localeCompare(a.created || "") || (b.updatedAt || 0) - (a.updatedAt || 0));

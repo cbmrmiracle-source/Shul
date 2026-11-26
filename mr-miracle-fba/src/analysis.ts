@@ -24,11 +24,14 @@ export function resolveSkus(S: Store, ids: string[] | null): string[] | null {
 }
 
 export function costMap(S: Store) {
+  // unit cost per SKU: the manual cost if set, else the cost of its mapped inventory products (kits add up)
+  const mapped = new Map<string, number>();
+  try { for (const r of S.all(`SELECT m.sku, SUM(m.qty * p.avg_cost) c FROM inv_mappings m JOIN inv_products p ON p.id=m.product_id GROUP BY m.sku`)) mapped.set(r.sku, r.c); } catch { /* tables not created yet */ }
   // per-SKU unit economics for estimated profit: COGS + latest FBA fee + referral %
   const m = new Map<string, { cogs: number | null; fulfil: number | null; refPct: number | null }>();
   for (const r of S.all(`SELECT p.sku, p.cogs, f.fulfil_fee, f.referral_fee, f.price FROM products p
                          LEFT JOIN fee_snapshots f ON f.sku=p.sku AND f.day=(SELECT MAX(day) FROM fee_snapshots WHERE sku=p.sku)`)) {
-    m.set(r.sku, { cogs: r.cogs, fulfil: r.fulfil_fee, refPct: r.price && r.referral_fee !== null ? r.referral_fee / r.price : 0.15 });
+    m.set(r.sku, { cogs: r.cogs ?? (mapped.has(r.sku) ? mapped.get(r.sku)! : null), fulfil: r.fulfil_fee, refPct: r.price && r.referral_fee !== null ? r.referral_fee / r.price : 0.15 });
   }
   return m;
 }
